@@ -104,16 +104,16 @@ u32 get_type_size(Type *type) {
   switch (type->kind) {
   case TypeKindUnit: return 0;
   case TypeKindFunc: return 8;
-  case TypeKindInt: return 8;
+  case TypeKindInt:  return 8;
   case TypeKindBool: return 4;
-  case TypeKindStr: return 16;
+  case TypeKindStr:  return 16;
   }
 
   return 0;
 }
 
 u32 get_var_index(Vars *vars, u32 top, Str name) {
-  for (u32 i = top; i > 0; --i)
+  for (u32 i = top <= vars->len ? top : vars->len; i > 0; --i)
     if (str_eq(vars->items[i - 1].name, name))
       return i - 1;
 

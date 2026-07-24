@@ -190,14 +190,7 @@ static void rename_args_expr(Expr *expr, Strs *prev_arg_names,
   } break;
 
   case ExprKindFuncCall: {
-    for (u32 i = 0; i < prev_arg_names->len; ++i) {
-      if (str_eq(expr->as.func_call.name, prev_arg_names->items[i])) {
-        expr->as.func_call.name = new_arg_names->items[i];
-
-        break;
-      }
-    }
-
+    rename_args_expr(expr->as.func_call.func, prev_arg_names, new_arg_names, arena);
     rename_args_block(&expr->as.func_call.args, prev_arg_names, new_arg_names, arena);
   } break;
 
@@ -381,85 +374,87 @@ void expand_macros(Expr *expr, Macros *macros,
   case ExprKindFuncCall: {
     INLINE_THEN_EXPAND_BLOCK(expr->as.func_call.args);
 
-    Str name = expr->as.func_call.name;
-    Macro *macro = get_macro(macros, name, expr->as.func_call.args.len);
+    if (expr->as.func_call.func->kind == ExprKindIdent) {
+      Str name = expr->as.func_call.func->as.ident.name;
+      Macro *macro = get_macro(macros, name, expr->as.func_call.args.len);
 
-    if (macro) {
-      Exprs new_args = {
-        expr->as.func_call.args.items,
-        macro->arg_names.len,
-        macro->arg_names.cap,
-      };
+      if (macro) {
+        Exprs new_args = {
+          expr->as.func_call.args.items,
+          macro->arg_names.len,
+          macro->arg_names.cap,
+        };
 
-      if (macro->has_unpack) {
-        ERROR("Unpacking is not implemented yet\n");
-        INFO("TODO: Add it back when lists will be added\n");
-        exit(1);
-        // --new_args.len;
+        if (macro->has_unpack) {
+          ERROR("Unpacking is not implemented yet\n");
+          INFO("TODO: Add it back when lists will be added\n");
+          exit(1);
+          // --new_args.len;
 
-        // Exprs variadic;
-        // variadic.len = expr->as.func_call.args.len - new_args.len;
-        // variadic.items = arena_alloc(arena, variadic.len * sizeof(Expr *));
+          // Exprs variadic;
+          // variadic.len = expr->as.func_call.args.len - new_args.len;
+          // variadic.items = arena_alloc(arena, variadic.len * sizeof(Expr *));
 
-        // for (u32 i = 0; i < variadic.len; ++i)
-        //   variadic.items[i] = expr->as.func_call.args.items[new_args.len + i];
+          // for (u32 i = 0; i < variadic.len; ++i)
+          //   variadic.items[i] = expr->as.func_call.args.items[new_args.len + i];
 
-        // Expr *variadic_args = arena_alloc(arena, sizeof(Expr));
-        // variadic_args->kind = ExprKindList;
-        // variadic_args->as.list.content.items = variadic.items;
-        // variadic_args->as.list.content.len = variadic.len;
+          // Expr *variadic_args = arena_alloc(arena, sizeof(Expr));
+          // variadic_args->kind = ExprKindList;
+          // variadic_args->as.list.content.items = variadic.items;
+          // variadic_args->as.list.content.len = variadic.len;
 
-        // Expr **new_items = arena_alloc(arena, (new_args.len + 1) * sizeof(Expr *));
-        // memcpy(new_items, new_args.items, new_args.len * sizeof(Expr *));
-        // new_args.items = new_items;
+          // Expr **new_items = arena_alloc(arena, (new_args.len + 1) * sizeof(Expr *));
+          // memcpy(new_items, new_args.items, new_args.len * sizeof(Expr *));
+          // new_args.items = new_items;
 
-        // new_args.items[new_args.len++] = variadic_args;
+          // new_args.items[new_args.len++] = variadic_args;
+        }
+
+        Strs new_arg_names = {0};
+        StringBuilder sb = {0};
+
+        sb_push_str(&sb, macro->name);
+        sb_push_char(&sb, '@');
+
+        u32 prev_len = sb.len;
+
+        for (u32 i = 0; i < macro->arg_names.len; ++i) {
+          sb_push_str(&sb, macro->arg_names.items[i]);
+
+          Str new_arg_name;
+          new_arg_name.len = sb.len;
+          new_arg_name.ptr = arena_alloc(arena, new_arg_name.len);
+          memcpy(new_arg_name.ptr, sb.buffer, new_arg_name.len);
+          DA_APPEND(new_arg_names, new_arg_name);
+
+          sb.len = prev_len;
+        };
+
+        free(sb.buffer);
+
+        expr->kind = ExprKindBlock;
+        expr->as.block = macro->body;
+
+        Expr **new_items = arena_alloc(arena, expr->as.block.len * sizeof(Expr *));
+        memcpy(new_items, expr->as.block.items, expr->as.block.len * sizeof(Expr *));
+        expr->as.block.items = new_items;
+
+        clone_block(&expr->as.block, &new_arg_names, arena);
+        rename_args_block(&expr->as.block, &macro->arg_names,
+                          &new_arg_names, arena);
+        expand_macros_block(&expr->as.block, macros,
+                            &new_arg_names, &new_args,
+                            macro->has_unpack, arena,
+                            expr->loc.file_path,
+                            (i32) expr->loc.row - (i32) macro->row,
+                            (i32) expr->loc.col - (i32) macro->col,
+                            false);
+
+        if (new_arg_names.items)
+          free(new_arg_names.items);
+
+        break;
       }
-
-      Strs new_arg_names = {0};
-      StringBuilder sb = {0};
-
-      sb_push_str(&sb, macro->name);
-      sb_push_char(&sb, '@');
-
-      u32 prev_len = sb.len;
-
-      for (u32 i = 0; i < macro->arg_names.len; ++i) {
-        sb_push_str(&sb, macro->arg_names.items[i]);
-
-        Str new_arg_name;
-        new_arg_name.len = sb.len;
-        new_arg_name.ptr = arena_alloc(arena, new_arg_name.len);
-        memcpy(new_arg_name.ptr, sb.buffer, new_arg_name.len);
-        DA_APPEND(new_arg_names, new_arg_name);
-
-        sb.len = prev_len;
-      };
-
-      free(sb.buffer);
-
-      expr->kind = ExprKindBlock;
-      expr->as.block = macro->body;
-
-      Expr **new_items = arena_alloc(arena, expr->as.block.len * sizeof(Expr *));
-      memcpy(new_items, expr->as.block.items, expr->as.block.len * sizeof(Expr *));
-      expr->as.block.items = new_items;
-
-      clone_block(&expr->as.block, &new_arg_names, arena);
-      rename_args_block(&expr->as.block, &macro->arg_names,
-                        &new_arg_names, arena);
-      expand_macros_block(&expr->as.block, macros,
-                          &new_arg_names, &new_args,
-                          macro->has_unpack, arena,
-                          expr->loc.file_path,
-                          (i32) expr->loc.row - (i32) macro->row,
-                          (i32) expr->loc.col - (i32) macro->col,
-                          false);
-
-      if (new_arg_names.items)
-        free(new_arg_names.items);
-
-      break;
     }
   } break;
 

@@ -753,7 +753,7 @@ static Expr *parser_parse_expr(Parser *parser) {
 
     default: {
       expr->kind = ExprKindFuncCall;
-      expr->as.func_call.name = parser_expect_token(parser, MASK(TT_IDENT))->lexeme;
+      expr->as.func_call.func = parser_parse_expr(parser);
 
       Token *token = parser_peek_token(parser);
       while (token && token->id != TT_CPAREN) {

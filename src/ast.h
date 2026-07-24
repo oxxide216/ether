@@ -75,8 +75,8 @@ typedef struct {
 } ExprFunc;
 
 typedef struct {
-  Str   name;
-  Exprs args;
+  Expr  *func;
+  Exprs  args;
 } ExprFuncCall;
 
 typedef struct {

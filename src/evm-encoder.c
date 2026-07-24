@@ -57,6 +57,18 @@ static BinOpKind bin_op_kind_to_evm(ErBinOpKind kind) {
   return 0;
 }
 
+// static ValueKind get_type_value_kind(Type *type) {
+//   switch (type->kind) {
+//   case TypeKindUnit: return ValueKindUnsigned;
+//   case TypeKindFunc: return ValueKindUnsigned;
+//   case TypeKindInt:  return ValueKindSigned;
+//   case TypeKindBool: return ValueKindUnsigned;
+//   case TypeKindStr:  return ValueKindUnsigned;
+//   }
+
+//   return 0;
+// }
+
 static void encode_block(Encoder *encoder, Exprs *block,
                          u32 dest_index, bool last_is_return);
 
@@ -145,6 +157,12 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   case ExprKindFuncCall: {
     Indices arg_indices = {0};
 
+    u32 index;
+    if (expr->as.func_call.func->kind != ExprKindIdent) {
+      index = define_var(encoder);
+      encode_expr(encoder, expr->as.func_call.func, index);
+    }
+
     for (u32 i = 0; i < expr->as.func_call.args.len; ++i) {
       u32 arg_index = define_var(encoder);
       encode_expr(encoder, expr->as.func_call.args.items[i], arg_index);
@@ -152,27 +170,60 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     }
 
     Instr instr;
-    if (dest_index == (u32) -1) {
-      instr = (Instr) {
-        InstrKindCall,
-        {
-          .call = {
-            expr->as.func_call.name,
-            arg_indices,
+    if (expr->as.func_call.func->kind == ExprKindIdent) {
+      if (dest_index == (u32) -1) {
+        instr = (Instr) {
+          InstrKindCall,
+          {
+            .call = {
+              expr->as.func_call.func->as.ident.name,
+              arg_indices,
+            },
           },
-        },
-      };
+        };
+      } else {
+        instr = (Instr) {
+          InstrKindCallAssign,
+          {
+            .call_assign = {
+              dest_index,
+              expr->as.func_call.func->as.ident.name,
+              arg_indices,
+            },
+          },
+        };
+      }
     } else {
-      instr = (Instr) {
-        InstrKindCallAssign,
-        {
-          .call_assign = {
-            dest_index,
-            expr->as.func_call.name,
-            arg_indices,
+      if (dest_index == (u32) -1) {
+        instr = (Instr) {
+          InstrKindCallRef,
+          {
+            .call_ref = {
+              index,
+              arg_indices,
+            },
           },
-        },
-      };
+        };
+      } else {
+        // Var *var = encoder->vars->items + index;
+        // u32 size = get_type_size(var->type.return_type);
+        // ValueKind kind = get_type_value_kind(var->type.return_type);
+        u32 size = 8;
+        ValueKind kind = ValueKindSigned;
+
+        instr = (Instr) {
+          InstrKindCallRefAssign,
+          {
+            .call_ref_assign = {
+              dest_index,
+              size,
+              kind,
+              index,
+              arg_indices,
+            },
+          },
+        };
+      }
     }
     DA_APPEND(encoder->instrs, instr);
   } break;
@@ -434,6 +485,7 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
 
       case InstrKindCallAssign: {
         fwrite(&instr->as.call_assign.dest_index, sizeof(instr->as.call_assign.dest_index), 1, stream);
+
         encode_str(stream, instr->as.call_assign.name);
         fwrite(&instr->as.call_assign.arg_indices.len, sizeof(instr->as.call_assign.arg_indices.len), 1, stream);
         for (u32 k = 0; k < instr->as.call_assign.arg_indices.len; ++k) {
@@ -472,6 +524,29 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
       case InstrKindRefProc: {
         fwrite(&instr->as.ref_proc.dest_index, sizeof(instr->as.ref_proc.dest_index), 1, stream);
         encode_str(stream, instr->as.ref_proc.proc_name);
+      } break;
+
+      case InstrKindCallRef: {
+        fwrite(&instr->as.call_ref.index, sizeof(instr->as.call_ref.index), 1, stream);
+        fwrite(&instr->as.call_ref.arg_indices.len, sizeof(instr->as.call_ref.arg_indices.len), 1, stream);
+        for (u32 k = 0; k < instr->as.call_ref.arg_indices.len; ++k) {
+          u32 arg_index = instr->as.call_ref.arg_indices.items[k];
+          fwrite(&arg_index, sizeof(arg_index), 1, stream);
+        }
+      } break;
+
+      case InstrKindCallRefAssign: {
+        fwrite(&instr->as.call_ref_assign.dest_index, sizeof(instr->as.call_ref_assign.dest_index), 1, stream);
+        fwrite(&instr->as.call_ref_assign.return_size, sizeof(instr->as.call_ref_assign.return_size), 1, stream);
+        u8 return_kind = instr->as.call_ref_assign.return_kind;
+        fwrite(&return_kind, 1, 1, stream);
+
+        fwrite(&instr->as.call_ref_assign.index, sizeof(instr->as.call_ref_assign.index), 1, stream);
+        fwrite(&instr->as.call_ref_assign.arg_indices.len, sizeof(instr->as.call_ref_assign.arg_indices.len), 1, stream);
+        for (u32 k = 0; k < instr->as.call_ref_assign.arg_indices.len; ++k) {
+          u32 arg_index = instr->as.call_ref_assign.arg_indices.items[k];
+          fwrite(&arg_index, sizeof(arg_index), 1, stream);
+        }
       } break;
       }
     }
