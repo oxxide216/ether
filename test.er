@@ -1,9 +1,8 @@
-(fun add (a b)
-  (ret (if 0
-         (+ a b)
-        else
-         (- a b))))
+(macro add (a b)
+  (if 0
+    (+ a b)
+   else
+    (- a b)))
 
 (fun main ()
-  (let add_func add)
-  (add_func 2 2))
+  (add 2 2))

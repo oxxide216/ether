@@ -1,5 +1,6 @@
 #include "io.h"
 #include "parser.h"
+#include "macros.h"
 #include "evm-encoder.h"
 #include "shl/shl-defs.h"
 #define SHL_STR_IMPLEMENTATION
@@ -178,21 +179,24 @@ i32 main(i32 argc, char **argv) {
 
   Str input_path_str = str_new(config.input_path);
   CachedASTs cached_asts = {0};
+  Macros macros = {0};
   Arena arena = {0};
-  Exprs ast = parse(code, input_path_str, &config.include_paths, &cached_asts, &arena);
+  Exprs ast = parse(code, input_path_str, &config.include_paths,
+                    &cached_asts, &macros, &arena);
+  expand_macros_block(&ast, &macros, NULL, NULL,
+                      false, &arena, input_path_str,
+                      0, 0, false);
 
   Funcs funcs = {0};
-  Func func0 = { &ast.items[0]->as.func, {} };
-  Var var0 = { STR_LIT("a"), {} };
-  DA_APPEND(func0.vars, var0);
-  Var var1 = { STR_LIT("b"), {} };
-  DA_APPEND(func0.vars, var1);
-  Var var2 = { STR_LIT("c"), {} };
-  DA_APPEND(func0.vars, var2);
-  DA_APPEND(funcs, func0);
-  Func func1 = { &ast.items[1]->as.func, {} };
-  Var var3 = { STR_LIT("add_func"), {} };
-  DA_APPEND(func1.vars, var3);
+  // Func func0 = { &ast.items[0]->as.func, {} };
+  // Var var0 = { STR_LIT("a"), {} };
+  // DA_APPEND(func0.vars, var0);
+  // Var var1 = { STR_LIT("b"), {} };
+  // DA_APPEND(func0.vars, var1);
+  // Var var2 = { STR_LIT("c"), {} };
+  // DA_APPEND(func0.vars, var2);
+  // DA_APPEND(funcs, func0);
+  Func func1 = { &ast.items[0]->as.func, {} };
   DA_APPEND(funcs, func1);
 
   remove(config.ir_path);
@@ -200,6 +204,8 @@ i32 main(i32 argc, char **argv) {
   if (!ir_file) {
     ERROR("Could not write %s\n", config.ir_path);
     arena_free(&arena);
+    if (macros.items)
+      free(macros.items);
     cached_asts_destroy(&cached_asts);
     free(code.ptr);
     config_destroy(&config);
@@ -253,6 +259,8 @@ i32 main(i32 argc, char **argv) {
 end:
   free(sb.buffer);
   arena_free(&arena);
+  if (macros.items)
+    free(macros.items);
   cached_asts_destroy(&cached_asts);
   free(code.ptr);
   config_destroy(&config);

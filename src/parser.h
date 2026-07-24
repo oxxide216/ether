@@ -29,6 +29,6 @@ Exprs parse_ex(Str code, Str file_path, Macros *macros,
                Strs *included_files, Strs *include_paths,
                CachedASTs *cached_asts, Arena *arena);
 Exprs parse(Str code, Str file_path, Strs *include_paths,
-            CachedASTs *cached_asts, Arena *arena);
+            CachedASTs *cached_asts, Macros *macros, Arena *arena);
 
 #endif // PARSER_H

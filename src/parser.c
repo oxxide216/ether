@@ -352,6 +352,7 @@ static void include_file(Strs *included_files, Str new_file) {
 static Expr     *parser_parse_expr(Parser *parser);
 static Exprs     parser_parse_block(Parser *parser, u64 end_id_mask);
 static ExprFunc  parser_parse_func(Parser *parser);
+static void      parser_parse_macro_def(Parser *parser);
 
 Exprs parse_ex(Str code, Str file_path, Macros *macros,
                Strs *included_files, Strs *include_paths,
@@ -400,10 +401,16 @@ Exprs parse_ex(Str code, Str file_path, Macros *macros,
   while (token_ptr) {
     parser_expect_token(&parser, MASK(TT_OPAREN));
 
-    Expr *expr = arena_alloc(arena, sizeof(Expr));
-    expr->kind = ExprKindFunc;
-    expr->as.func = parser_parse_func(&parser);
-    DA_ARENA_APPEND(ast, expr, arena);
+    token_ptr = parser_expect_token(&parser, MASK(TT_FUN) | MASK(TT_MACRO));
+
+    if (token_ptr->id == TT_FUN) {
+      Expr *expr = arena_alloc(arena, sizeof(Expr));
+      expr->kind = ExprKindFunc;
+      expr->as.func = parser_parse_func(&parser);
+      DA_ARENA_APPEND(ast, expr, arena);
+    } else {
+      parser_parse_macro_def(&parser);
+    }
 
     token_ptr = parser_peek_token(&parser);
   }
@@ -439,12 +446,10 @@ Exprs parse_ex(Str code, Str file_path, Macros *macros,
 static void parser_parse_macro_def(Parser *parser) {
   Macro macro = {0};
 
-  Token *begin_token = parser_next_token(parser);
-  macro.row = begin_token->row;
-  macro.col = begin_token->col;
-
   Token *name_token = parser_expect_token(parser, MASK(TT_IDENT));
   macro.name = name_token->lexeme;
+  macro.row = name_token->row;
+  macro.col = name_token->col;
 
   parser_expect_token(parser, MASK(TT_OPAREN));
 
@@ -475,8 +480,6 @@ static void parser_parse_macro_def(Parser *parser) {
 
 static ExprFunc parser_parse_func(Parser *parser) {
   ExprFunc result = {0};
-
-  parser_expect_token(parser, MASK(TT_FUN));
 
   result.name = parser_expect_token(parser, MASK(TT_IDENT))->lexeme;
 
@@ -608,6 +611,8 @@ static Expr *parser_parse_expr(Parser *parser) {
 
     switch (token->id) {
     case TT_FUN: {
+      parser_next_token(parser);
+
       expr->kind = ExprKindFunc;
       expr->as.func = parser_parse_func(parser);
     } break;
@@ -658,6 +663,7 @@ static Expr *parser_parse_expr(Parser *parser) {
     } break;
 
     case TT_MACRO: {
+      parser_next_token(parser);
       parser_parse_macro_def(parser);
 
       expr->kind = ExprKindBlock;
@@ -786,18 +792,15 @@ static Exprs parser_parse_block(Parser *parser, u64 end_id_mask) {
 }
 
 Exprs parse(Str code, Str file_path, Strs *include_paths,
-            CachedASTs *cached_asts, Arena *arena) {
-  Macros macros = {0};
+            CachedASTs *cached_asts, Macros *macros, Arena *arena) {
   Strs included_files = {0};
 
   DA_APPEND(included_files, file_path);
 
-  Exprs result = parse_ex(code, file_path, &macros,
+  Exprs result = parse_ex(code, file_path, macros,
                           &included_files, include_paths,
                           cached_asts, arena);
 
-  if (macros.items)
-    free(macros.items);
   free(included_files.items);
 
   return result;
