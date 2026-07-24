@@ -1,4 +1,4 @@
-(macro add (a b)
+(fun add (a b)
   (if 0
     (+ a b)
    else

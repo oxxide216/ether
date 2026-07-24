@@ -188,15 +188,13 @@ i32 main(i32 argc, char **argv) {
                       0, 0, false);
 
   Funcs funcs = {0};
-  // Func func0 = { &ast.items[0]->as.func, {} };
-  // Var var0 = { STR_LIT("a"), {} };
-  // DA_APPEND(func0.vars, var0);
-  // Var var1 = { STR_LIT("b"), {} };
-  // DA_APPEND(func0.vars, var1);
-  // Var var2 = { STR_LIT("c"), {} };
-  // DA_APPEND(func0.vars, var2);
-  // DA_APPEND(funcs, func0);
-  Func func1 = { &ast.items[0]->as.func, {} };
+  Func func0 = { &ast.items[0]->as.func, {} };
+  Var var0 = { STR_LIT("a"), {} };
+  DA_APPEND(func0.vars, var0);
+  Var var1 = { STR_LIT("b"), {} };
+  DA_APPEND(func0.vars, var1);
+  DA_APPEND(funcs, func0);
+  Func func1 = { &ast.items[1]->as.func, {} };
   DA_APPEND(funcs, func1);
 
   remove(config.ir_path);
