@@ -157,8 +157,13 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   case ExprKindFuncCall: {
     Indices arg_indices = {0};
 
+    bool opt = expr->as.func_call.func->kind == ExprKindIdent;
+    if (opt)
+      opt = get_var_index(encoder->vars, encoder->vars_defined,
+                          expr->as.func_call.func->as.ident.name) == (u32) -1;
+
     u32 index;
-    if (expr->as.func_call.func->kind != ExprKindIdent) {
+    if (!opt) {
       index = define_var(encoder);
       encode_expr(encoder, expr->as.func_call.func, index);
     }
@@ -170,7 +175,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     }
 
     Instr instr;
-    if (expr->as.func_call.func->kind == ExprKindIdent) {
+    if (opt) {
       if (dest_index == (u32) -1) {
         instr = (Instr) {
           InstrKindCall,

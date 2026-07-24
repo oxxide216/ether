@@ -5,4 +5,5 @@
          (- a b))))
 
 (fun main ()
-  (add 2 2))
+  (let add_func add)
+  (add_func 2 2))

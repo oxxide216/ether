@@ -191,6 +191,8 @@ i32 main(i32 argc, char **argv) {
   DA_APPEND(func0.vars, var2);
   DA_APPEND(funcs, func0);
   Func func1 = { &ast.items[1]->as.func, {} };
+  Var var3 = { STR_LIT("add_func"), {} };
+  DA_APPEND(func1.vars, var3);
   DA_APPEND(funcs, func1);
 
   remove(config.ir_path);
