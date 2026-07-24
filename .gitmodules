@@ -1,0 +1,9 @@
+[submodule "libs/shl"]
+	path = libs/shl
+	url = https://github.com/oxxide216/shl
+[submodule "libs/e"]
+	path = libs/e
+	url = https://github.com/oxxide216/e
+[submodule "libs/lexgen"]
+	path = libs/lexgen
+	url = https://github.com/oxxide216/lexgen

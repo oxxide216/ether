@@ -1,0 +1,8 @@
+(fun add (a b)
+  (ret (if 0
+         (+ a b)
+        else
+         (- a b))))
+
+(fun main ()
+  (add 2 2))
