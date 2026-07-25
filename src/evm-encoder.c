@@ -143,7 +143,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   } break;
 
   case ExprKindBlock: {
+    u32 prev_vars_defined = encoder->vars_defined;
     encode_block(encoder, &expr->as.block, dest_index, false);
+    encoder->vars_defined = prev_vars_defined;
   } break;
 
   case ExprKindIdent: {

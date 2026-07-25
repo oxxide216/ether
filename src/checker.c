@@ -118,8 +118,12 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindBlock: {
-    CERRORF(expr, "Checking expression of type %u is not implemented yet\n", expr->kind);
-    exit(1);
+    u32 prev_protos_len = checker->protos->len;
+    u32 prev_vars_len = checker->vars.len;
+    Type *result = check_block(&expr->as.block, checker, value_expected);
+    checker->vars.len = prev_vars_len;
+    checker->protos->len = prev_protos_len;
+    return result;
   }
 
   case ExprKindIdent: {
@@ -141,8 +145,10 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindFunc: {
-    CERRORF(expr, "Checking expression of type %u is not implemented yet\n", expr->kind);
-    exit(1);
+    u32 index = get_func_index(checker->funcs, expr->as.func.name);
+    if (index == (u32) -1)
+      return add_func(&expr->as.func, checker->funcs, checker->arena);
+    return checker->funcs->items[index].type;
   }
 
   case ExprKindFuncCall: {
@@ -223,10 +229,37 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     return func_type->return_type;
   }
 
-  case ExprKindLet:
+  case ExprKindLet: {
+    Type *type = check_expr(expr->as.let.value, checker, true);
+    if (!type)
+      return NULL;
+
+    Var var = {
+      expr->as.let.name,
+      type,
+    };
+    DA_APPEND(checker->vars, var);
+
+    return type;
+  }
+
   case ExprKindSet: {
-    CERRORF(expr, "Checking expression of type %u is not implemented yet\n", expr->kind);
-    exit(1);
+    Type *type = check_expr(expr->as.set.value, checker, true);
+    if (!type)
+      return NULL;
+
+    u32 var_index = get_var_index(&checker->vars, checker->vars.len, expr->as.set.name);
+    if (var_index == (u32) -1) {
+      CERRORF(expr, "Symbol "STR_FMT" was not defined before usage\n",
+              STR_ARG(expr->as.set.name));
+      return NULL;
+    }
+
+    Var *var = checker->vars.items + var_index;
+    if (!type_narrow(expr, var->type, type, true))
+      return NULL;
+
+    return type;
   }
 
   case ExprKindRet: {
