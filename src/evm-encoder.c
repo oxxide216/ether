@@ -5,6 +5,7 @@ typedef struct {
   FILE   *stream;
   Funcs  *funcs;
   Instrs  instrs;
+  Data    data;
   Vars   *vars;
   u32     vars_defined;
 } Encoder;
@@ -99,8 +100,25 @@ static void encode_block(Encoder *encoder, Exprs *block,
 static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   switch (expr->kind) {
   case ExprKindStr: {
-    fprintf(stderr, "Expr not yet implemented: %u\n", expr->kind);
-    exit(1);
+    if (dest_index == (u32) -1)
+      break;
+
+    Instr instr = {
+      InstrKindStoreData,
+      {
+        .store_data = {
+          dest_index,
+          encoder->data.len,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    DataEntry entry = {
+      (u8 *) expr->as.str.str.ptr,
+      expr->as.str.str.len,
+    };
+    DA_APPEND(encoder->data, entry);
   } break;
 
   case ExprKindInt: {
@@ -552,8 +570,16 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
       case InstrKindRef:
       case InstrKindCopyToRef:
       case InstrKindCopyFromRef:
-      case InstrKindInlineAsm:
-      case InstrKindStoreData:
+      case InstrKindInlineAsm: {
+        fprintf(stderr, "Instr not yet implemented: %u\n", instr->kind);
+        exit(1);
+      }
+
+      case InstrKindStoreData: {
+        fwrite(&instr->as.store_data.index, sizeof(instr->as.store_data.index), 1, stream);
+        fwrite(&instr->as.store_data.data_index, sizeof(instr->as.store_data.data_index), 1, stream);
+      } break;
+
       case InstrKindConvert:
       case InstrKindCopyToRefFixed:
       case InstrKindCopyFromRefFixed: {
@@ -592,6 +618,17 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
     }
   }
 
+  fwrite(&encoder.data.len, sizeof(encoder.data.len), 1, stream);
+  for (u32 i = 0; i < encoder.data.len; ++i) {
+    DataEntry *entry = encoder.data.items + i;
+
+    fwrite(&entry->len, sizeof(entry->len), 1, stream);
+    fwrite(entry->data, 1, entry->len, stream);
+  }
+
+  u32 imports_len = 0;
+  fwrite(&imports_len, sizeof(imports_len), 1, stream);
+
   for (u32 i = 0; i < encoder.instrs.len; ++i) {
     Instr *instr = encoder.instrs.items + i;
 
@@ -605,9 +642,6 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
   if (encoder.instrs.items)
     free(encoder.instrs.items);
 
-  u32 data_len = 0;
-  fwrite(&data_len, sizeof(data_len), 1, stream);
-
-  u32 imports_len = 0;
-  fwrite(&imports_len, sizeof(imports_len), 1, stream);
+  if (encoder.data.items)
+    free(encoder.data.items);
 }
