@@ -95,7 +95,9 @@ bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
 Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena);
 bool  check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena);
 
-Type *check_expr(Expr *expr, FuncChecker *checker) {
+Type *check_block(Exprs *block, FuncChecker *checker, bool value_expected);
+
+Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   switch (expr->kind) {
   case ExprKindStr: {
     CERRORF(expr, "Checking expression of type %u is not implemented yet\n", expr->kind);
@@ -143,7 +145,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker) {
   }
 
   case ExprKindFuncCall: {
-    Type *func_type = check_expr(expr->as.func_call.func, checker);
+    Type *func_type = check_expr(expr->as.func_call.func, checker, true);
 
     if (expr->as.func_call.args.len != func_type->arg_types.len) {
       CERRORF(expr, "Invalid arguments count: %u/%u\n",
@@ -170,7 +172,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker) {
     Types arg_types = {0};
 
     for (u32 i = 0; i < args->len; ++i) {
-      Type *arg_type = check_expr(args->items[i], checker);
+      Type *arg_type = check_expr(args->items[i], checker, true);
       DA_APPEND(arg_types, arg_type);
     }
 
@@ -216,15 +218,121 @@ Type *check_expr(Expr *expr, FuncChecker *checker) {
 
   case ExprKindLet:
   case ExprKindSet:
-  case ExprKindRet:
-  case ExprKindIf:
-  case ExprKindBinOp: {
+  case ExprKindRet: {
     CERRORF(expr, "Checking expression of type %u is not implemented yet\n", expr->kind);
     exit(1);
+  }
+
+  case ExprKindIf: {
+    Type *cond_type = check_expr(expr->as._if.cond, checker, true);
+    if (!cond_type)
+      return NULL;
+
+    Type type = { TypeKindBool, {} };
+    if (!type_eq(cond_type, &type)) {
+      Str cond_type_str = get_type_str(cond_type);
+      CERRORF(expr->as._if.cond, "Type bool expected in condition, got "STR_FMT"\n",
+              STR_ARG(cond_type_str));
+      free_type_str(cond_type_str, cond_type);
+      return NULL;
+    }
+
+    Var var = {
+      {},
+      cond_type,
+    };
+    DA_APPEND(checker->vars, var);
+
+    Type *if_type = check_block(&expr->as._if.if_body, checker, value_expected);
+    if (!if_type)
+      return NULL;
+
+    Type *else_type = check_block(&expr->as._if.else_body, checker, value_expected);
+    if (!else_type)
+      return NULL;
+
+    if (value_expected && !type_eq(if_type, else_type)) {
+      Str if_type_str = get_type_str(if_type);
+      Str else_type_str = get_type_str(else_type);
+      CERRORF(expr, "Types of then and else branches do not match: got "STR_FMT" and "STR_FMT"\n",
+              STR_ARG(if_type_str), STR_ARG(else_type_str));
+      free_type_str(if_type_str, if_type);
+      free_type_str(else_type_str, else_type);
+      return NULL;
+    }
+
+    return if_type;
+  }
+
+  case ExprKindBinOp: {
+    Type type = { TypeKindInt, {} };
+
+    if (expr->as.bin_op.args.len < 2) {
+      CERRORF(expr, "Binary operation should have at least 2 arguments, %u were provided\n",
+              expr->as.bin_op.args.len);
+      return NULL;
+    }
+
+    if (expr->as.bin_op.kind >= ErBinOpKindEq && expr->as.bin_op.kind <= ErBinOpKindGe &&
+        expr->as.bin_op.args.len != 2) {
+      CERRORF(expr, "Comparison operations take exactly 2 arguments, %u were provided\n",
+              expr->as.bin_op.args.len);
+      return NULL;
+    }
+
+    Type *first_arg_type;
+    for (u32 i = 0; i < expr->as.bin_op.args.len; ++i) {
+      Type *arg_type = check_expr(expr->as.bin_op.args.items[i], checker, true);
+      if (!arg_type)
+        return NULL;
+
+      if (i == 0) {
+        first_arg_type = arg_type;
+        if (!type_narrow(expr->as.bin_op.args.items[i], arg_type, &type, true))
+          return NULL;
+
+        if (expr->as.bin_op.args.len > 2) {
+          Var var = {
+            {},
+            first_arg_type,
+          };
+          DA_APPEND(checker->vars, var);
+        }
+      } else {
+        if (!type_narrow(expr->as.bin_op.args.items[i], arg_type, first_arg_type, true))
+          return NULL;
+      }
+
+      Var var = {
+        {},
+        arg_type,
+      };
+      DA_APPEND(checker->vars, var);
+    }
+
+    if (expr->as.bin_op.kind >= ErBinOpKindEq && expr->as.bin_op.kind <= ErBinOpKindGe) {
+      Type *result = arena_alloc(checker->arena, sizeof(Type));
+      result->kind = TypeKindBool;
+      return result;
+    }
+
+    return first_arg_type;
   }
   }
 
   return NULL;
+}
+
+Type *check_block(Exprs *block, FuncChecker *checker, bool value_expected) {
+  for (u32 i = 0; i + 1 < block->len; ++i)
+    check_expr(block->items[i], checker, false);
+
+  if (block->len > 0)
+    return check_expr(block->items[block->len - 1], checker, value_expected);
+
+  Type *result = arena_alloc(checker->arena, sizeof(Type));
+  result->kind = TypeKindUnit;
+  return result;
 }
 
 Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena) {
@@ -277,7 +385,7 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
   u32 prev_protos_len = protos->len;
 
   for (u32 i = 0; i + 1 < func->expr->body.len; ++i) {
-    if (!check_expr(func->expr->body.items[i], &checker))
+    if (!check_expr(func->expr->body.items[i], &checker, false))
       goto fail;
     func = funcs->items + index;
   }
@@ -288,7 +396,8 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
       DA_APPEND(checker.vars, var);
     }
 
-    Type *type = check_expr(func->expr->body.items[func->expr->body.len - 1], &checker);
+    Type *type = check_expr(func->expr->body.items[func->expr->body.len - 1],
+                            &checker, true);
     func = funcs->items + index;
     if (!type)
       goto fail;

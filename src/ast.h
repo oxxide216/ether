@@ -101,6 +101,12 @@ typedef enum {
   ErBinOpKindMul,
   ErBinOpKindDiv,
   ErBinOpKindRem,
+  ErBinOpKindEq,
+  ErBinOpKindNe,
+  ErBinOpKindLs,
+  ErBinOpKindLe,
+  ErBinOpKindGt,
+  ErBinOpKindGe,
 } ErBinOpKind;
 
 typedef struct {

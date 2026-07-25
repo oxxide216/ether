@@ -65,6 +65,12 @@ static BinOpKind bin_op_kind_to_evm(ErBinOpKind kind) {
   case ErBinOpKindMul: return BinOpKindMulInt;
   case ErBinOpKindDiv: return BinOpKindDivInt;
   case ErBinOpKindRem: return BinOpKindRem;
+  case ErBinOpKindEq:  return BinOpKindEqInt;
+  case ErBinOpKindNe:  return BinOpKindNeInt;
+  case ErBinOpKindLs:  return BinOpKindLsInt;
+  case ErBinOpKindLe:  return BinOpKindLeInt;
+  case ErBinOpKindGt:  return BinOpKindGtInt;
+  case ErBinOpKindGe:  return BinOpKindGeInt;
   }
 
   return 0;
