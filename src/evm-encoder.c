@@ -429,7 +429,7 @@ static void encode_block(Encoder *encoder, Exprs *block,
         },
       };
       DA_APPEND(encoder->instrs, instr);
-    } else if (dest_index != (u32) -1) {
+    } else {
       encode_expr(encoder, block->items[block->len - 1], dest_index);
     }
   }

@@ -100,8 +100,9 @@ Type *check_block(Exprs *block, FuncChecker *checker, bool value_expected);
 Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   switch (expr->kind) {
   case ExprKindStr: {
-    CERRORF(expr, "Checking expression of type %u is not implemented yet\n", expr->kind);
-    exit(1);
+    Type *result = arena_alloc(checker->arena, sizeof(Type));
+    result->kind = TypeKindStr;
+    return result;
   }
 
   case ExprKindInt: {
@@ -180,7 +181,13 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       if (!type_narrow(args->items[i], func_type->arg_types.items[i],
                        arg_types.items[i], false)) {
         Func *func = checker->funcs->items + func_type->func_index;
-        func_type = add_func(func->expr, checker->funcs, checker->arena);
+        u32 index = get_func_index_with_signature(checker->funcs,
+                                                  func->expr->name,
+                                                  &arg_types);
+        if (index == (u32) -1)
+          func_type = add_func(func->expr, checker->funcs, checker->arena);
+        else
+          func_type = checker->funcs->items[index].type;
         updated_func = true;
         checker->vars.len -= i;
         break;
@@ -217,11 +224,43 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindLet:
-  case ExprKindSet:
-  case ExprKindRet: {
+  case ExprKindSet: {
     CERRORF(expr, "Checking expression of type %u is not implemented yet\n", expr->kind);
     exit(1);
   }
+
+  case ExprKindRet: {
+    Type *return_type;
+    if (expr->as.ret.value) {
+      return_type = check_expr(expr->as.ret.value, checker, true);
+      if (!return_type)
+        return NULL;
+    } else {
+      return_type = arena_alloc(checker->arena, sizeof(Type));
+      return_type->kind = TypeKindUnit;
+    }
+
+    if (!type_narrow(expr->as.ret.value, checker->return_type, return_type, false)) {
+      Str a_str = get_type_str(return_type);
+      Str b_str = get_type_str(checker->return_type);
+      CERRORF(expr->as.ret.value,
+              "Cannot return value of type "STR_FMT" from a function returning "STR_FMT"\n",
+              STR_ARG(a_str), STR_ARG(b_str));
+      free_type_str(a_str, return_type);
+      free_type_str(b_str, checker->return_type);
+      return NULL;
+    }
+
+    Var var = {
+      {},
+      return_type,
+    };
+    DA_APPEND(checker->vars, var);
+
+    Type *result = arena_alloc(checker->arena, sizeof(Type));
+    result->kind = TypeKindUnit;
+    return result;
+  } break;
 
   case ExprKindIf: {
     Type *cond_type = check_expr(expr->as._if.cond, checker, true);
@@ -391,7 +430,9 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
   }
 
   if (func->expr->body.len > 0) {
-    if (func->expr->body.items[func->expr->body.len - 1]->kind != ExprKindRet) {
+    bool is_last_ret = func->expr->body.items[func->expr->body.len - 1]->kind == ExprKindRet;
+
+    if (!is_last_ret) {
       Var var = { {}, checker.return_type };
       DA_APPEND(checker.vars, var);
     }
@@ -401,18 +442,21 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
     func = funcs->items + index;
     if (!type)
       goto fail;
-    if (!type_eq(type, checker.return_type)) {
-      Str type_str = get_type_str(type);
-      Str return_type_str = get_type_str(checker.return_type);
-      CERRORF(func->expr->body.items[func->expr->body.len - 1],
-              "Cannot return value of type "STR_FMT" from a function returning "STR_FMT"\n",
-              STR_ARG(type_str), STR_ARG(return_type_str));
-      free_type_str(type_str, type);
-      free_type_str(return_type_str, checker.return_type);
-      goto fail;
-    }
 
-    *checker.return_type = *type;
+    if (!is_last_ret) {
+      if (!type_eq(type, checker.return_type)) {
+        Str type_str = get_type_str(type);
+        Str return_type_str = get_type_str(checker.return_type);
+        CERRORF(func->expr->body.items[func->expr->body.len - 1],
+                "Cannot return value of type "STR_FMT" from a function returning "STR_FMT"\n",
+                STR_ARG(type_str), STR_ARG(return_type_str));
+        free_type_str(type_str, type);
+        free_type_str(return_type_str, checker.return_type);
+        goto fail;
+      }
+
+      *checker.return_type = *type;
+    }
   }
 
   func->vars = checker.vars;

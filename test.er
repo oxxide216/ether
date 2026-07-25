@@ -1,8 +1,5 @@
-(fun add (a b)
-  (if false
-    (+ a b)
-   else
-    (- a b)))
-
 (fun main ()
-  (add 2 2))
+  (sub 2 2))
+
+(fun sub (a b)
+  (- a b))

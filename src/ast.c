@@ -131,3 +131,29 @@ u32 get_func_index(Funcs *funcs, Str name) {
 
   return (u32) -1;
 }
+
+u32 get_func_index_with_signature(Funcs *funcs, Str name, Types *arg_types) {
+  for (u32 i = 0; i < funcs->len; ++i) {
+    Func *func = funcs->items + i;
+
+    if (!str_eq(func->expr->name, name))
+      continue;
+
+    if (func->type->arg_types.len != arg_types->len)
+      continue;
+
+    bool all = true;
+
+    for (u32 j = 0; j < arg_types->len; ++j) {
+      if (!type_eq(func->type->arg_types.items[j], arg_types->items[j])) {
+        all = false;
+        break;
+      }
+    }
+
+    if (all)
+      return i;
+  }
+
+  return (u32) -1;
+}

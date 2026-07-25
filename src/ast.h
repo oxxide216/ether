@@ -166,5 +166,6 @@ u32 get_type_size(Type *type);
 
 u32 get_var_index(Vars *vars, u32 top, Str name);
 u32 get_func_index(Funcs *funcs, Str name);
+u32 get_func_index_with_signature(Funcs *funcs, Str name, Types *arg_types);
 
 #endif // AST_H
