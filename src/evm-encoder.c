@@ -3,6 +3,7 @@
 
 typedef struct {
   FILE   *stream;
+  Funcs  *funcs;
   Instrs  instrs;
   Vars   *vars;
   u32     vars_defined;
@@ -13,11 +14,24 @@ static void encode_str(FILE *stream, Str str) {
   fwrite(str.ptr, 1, str.len, stream);
 }
 
+static ValueKind get_type_value_kind(Type *type) {
+  switch (type->kind) {
+  case TypeKindUnit: return ValueKindUnsigned;
+  case TypeKindFunc: return ValueKindUnsigned;
+  case TypeKindInt:  return ValueKindSigned;
+  case TypeKindBool: return ValueKindUnsigned;
+  case TypeKindStr:  return ValueKindUnsigned;
+  case TypeKindAny:  return 0;
+  }
+
+  return 0;
+}
+
 static void encode_type(FILE *stream, Type *type) {
   (void) type;
 
-  u32 size = 8;
-  u8 kind = ValueKindSigned;
+  u32 size = get_type_size(type);
+  u8 kind = get_type_value_kind(type);
   fwrite(&size, sizeof(size), 1, stream);
   fwrite(&kind, sizeof(kind), 1, stream);
 }
@@ -26,8 +40,7 @@ static u32 define_var(Encoder *encoder) {
   Segments segments = {0};
   AlignedSegment segment = {
     0,
-    // get_type_size(&encoder->vars->items[encoder->vars_defined].type),
-    8,
+    get_type_size(encoder->vars->items[encoder->vars_defined].type),
   };
   DA_APPEND(segments, segment);
 
@@ -57,17 +70,22 @@ static BinOpKind bin_op_kind_to_evm(ErBinOpKind kind) {
   return 0;
 }
 
-// static ValueKind get_type_value_kind(Type *type) {
-//   switch (type->kind) {
-//   case TypeKindUnit: return ValueKindUnsigned;
-//   case TypeKindFunc: return ValueKindUnsigned;
-//   case TypeKindInt:  return ValueKindSigned;
-//   case TypeKindBool: return ValueKindUnsigned;
-//   case TypeKindStr:  return ValueKindUnsigned;
-//   }
+static void sb_push_type_hash(StringBuilder *sb, Type *type) {
+  sb_push_u32(sb, type->kind);
+  if (type->kind == TypeKindFunc) {
+    sb_push_type_hash(sb, type->return_type);
+    sb_push_u32(sb, type->arg_types.len);
+    for (u32 i = 0; i < type->arg_types.len; ++i)
+      sb_push_type_hash(sb, type->arg_types.items[i]);
+  }
+}
 
-//   return 0;
-// }
+static Str mangle_func_name(Func *func) {
+  StringBuilder sb = {0};
+  sb_push_str(&sb, func->expr->name);
+  sb_push_type_hash(&sb, func->type);
+  return sb_to_str(sb);
+}
 
 static void encode_block(Encoder *encoder, Exprs *block,
                          u32 dest_index, bool last_is_return);
@@ -128,12 +146,14 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     u32 index = get_var_index(encoder->vars, encoder->vars_defined, expr->as.ident.name);
     if (index == (u32) -1) {
+      index = get_func_index(encoder->funcs, expr->as.ident.name);
+      Str name = mangle_func_name(encoder->funcs->items + index);
       Instr instr = {
         InstrKindRefProc,
         {
           .ref_proc = {
             dest_index,
-            expr->as.ident.name,
+            name,
           },
         },
       };
@@ -176,12 +196,14 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     Instr instr;
     if (opt) {
+      index = get_func_index(encoder->funcs, expr->as.func_call.func->as.ident.name);
+      Str name = mangle_func_name(encoder->funcs->items + index);
       if (dest_index == (u32) -1) {
         instr = (Instr) {
           InstrKindCall,
           {
             .call = {
-              expr->as.func_call.func->as.ident.name,
+              name,
               arg_indices,
             },
           },
@@ -192,7 +214,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           {
             .call_assign = {
               dest_index,
-              expr->as.func_call.func->as.ident.name,
+              name,
               arg_indices,
             },
           },
@@ -210,11 +232,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           },
         };
       } else {
-        // Var *var = encoder->vars->items + index;
-        // u32 size = get_type_size(var->type.return_type);
-        // ValueKind kind = get_type_value_kind(var->type.return_type);
-        u32 size = 8;
-        ValueKind kind = ValueKindSigned;
+        Var *var = encoder->vars->items + index;
+        u32 size = get_type_size(var->type->return_type);
+        ValueKind kind = get_type_value_kind(var->type->return_type);
 
         instr = (Instr) {
           InstrKindCallRefAssign,
@@ -392,7 +412,7 @@ static void encode_block(Encoder *encoder, Exprs *block,
     encode_expr(encoder, block->items[i], (u32) -1);
 
   if (block->len > 0) {
-    if (last_is_return) {
+    if (last_is_return && block->items[block->len - 1]->kind != ExprKindRet) {
       u32 index = define_var(encoder);
       encode_expr(encoder, block->items[block->len - 1], index);
 
@@ -414,6 +434,7 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
 
   Encoder encoder = {0};
   encoder.stream = stream;
+  encoder.funcs = funcs;
 
   for (u32 i = 0; i < funcs->len; ++i) {
     Func *func = funcs->items + i;
@@ -422,13 +443,19 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
     encoder.vars = &func->vars;
     encoder.vars_defined = func->expr->args.len;
 
-    encode_str(stream, func->expr->name);
+    if (str_eq(func->expr->name, STR_LIT("main"))) {
+      encode_str(stream, func->expr->name);
+    } else {
+      Str name = mangle_func_name(func);
+      encode_str(stream, name);
+      free(name.ptr);
+    }
 
     fwrite(&func->expr->args.len, sizeof(func->expr->args.len), 1, stream);
 
     for (u32 j = 0; j < func->expr->args.len; ++j)
-      encode_type(stream, &func->expr->args.items[j].type);
-    encode_type(stream, &func->expr->return_type);
+      encode_type(stream, func->type->arg_types.items[j]);
+    encode_type(stream, func->type->return_type);
 
     encode_block(&encoder, &func->expr->body, (u32) -1, true);
     fwrite(&encoder.instrs.len, sizeof(encoder.instrs.len), 1, stream);
@@ -557,6 +584,16 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
     }
   }
 
+  for (u32 i = 0; i < encoder.instrs.len; ++i) {
+    Instr *instr = encoder.instrs.items + i;
+
+    if (instr->kind == InstrKindRefProc)
+      free(instr->as.ref_proc.proc_name.ptr);
+    else if (instr->kind == InstrKindCall)
+      free(instr->as.call.name.ptr);
+    else if (instr->kind == InstrKindCallAssign)
+      free(instr->as.call_assign.name.ptr);
+  }
   if (encoder.instrs.items)
     free(encoder.instrs.items);
 

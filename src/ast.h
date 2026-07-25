@@ -5,16 +5,19 @@
 #include "shl/shl-defs.h"
 #include "shl/shl-str.h"
 
+typedef Da(Str) Strs;
+
 typedef enum {
   TypeKindUnit = 0,
   TypeKindFunc,
   TypeKindInt,
   TypeKindBool,
   TypeKindStr,
+  TypeKindAny,
 } TypeKind;
 
 typedef struct Type Type;
-typedef Da(Type) Types;
+typedef Da(Type *) Types;
 
 struct Type {
   TypeKind kind;
@@ -22,6 +25,7 @@ struct Type {
     struct {
       Type  *return_type;
       Types  arg_types;
+      u32    func_index;
     };
   };
 };
@@ -61,16 +65,8 @@ typedef struct  {
 } ExprIdent;
 
 typedef struct {
-  Str  name;
-  Type type;
-} ErArg;
-
-typedef Da(ErArg) ErArgs;
-
-typedef struct {
   Str    name;
-  ErArgs args;
-  Type   return_type;
+  Strs   args;
   Exprs  body;
 } ExprFunc;
 
@@ -139,14 +135,16 @@ struct Expr {
 };
 
 typedef struct {
-  Str  name;
-  Type type;
+  Str   name;
+  Type *type;
 } Var;
 
 typedef Da(Var) Vars;
 
 typedef struct {
   ExprFunc *expr;
+  Type     *type;
+  Strs      arg_names;
   Vars      vars;
 } Func;
 
@@ -161,5 +159,6 @@ void type_free(Type *type);
 u32 get_type_size(Type *type);
 
 u32 get_var_index(Vars *vars, u32 top, Str name);
+u32 get_func_index(Funcs *funcs, Str name);
 
 #endif // AST_H

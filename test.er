@@ -1,8 +1,15 @@
-(fun add (a b)
-  (if 0
-    (+ a b)
-   else
-    (- a b)))
+; (fun add (a b)
+;   (if 0
+;     (+ a b)
+;    else
+;     (- a b)))
 
-(fun main ()
-  (add 2 2))
+; (fun main ()
+;   (add 2 2))
+
+(fun id (value)
+  value)
+
+(fun main()
+  (id 0)
+  (id false))

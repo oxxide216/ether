@@ -486,8 +486,7 @@ static ExprFunc parser_parse_func(Parser *parser) {
   parser_expect_token(parser, MASK(TT_OPAREN));
   Token *arg_token = parser_expect_token(parser, MASK(TT_IDENT) | MASK(TT_CPAREN));
   while (arg_token && arg_token->id != TT_CPAREN) {
-    ErArg arg = { arg_token->lexeme, {} };
-    DA_ARENA_APPEND(result.args, arg, parser->arena);
+    DA_ARENA_APPEND(result.args, arg_token->lexeme, parser->arena);
 
     arg_token = parser_expect_token(parser, MASK(TT_IDENT) |
                                             MASK(TT_CPAREN));

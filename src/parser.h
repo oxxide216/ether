@@ -4,8 +4,6 @@
 #include "arena.h"
 #include "ast.h"
 
-typedef Da(Str) Strs;
-
 typedef struct {
   Str   name;
   Strs  arg_names;

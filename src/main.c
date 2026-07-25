@@ -1,6 +1,7 @@
 #include "io.h"
 #include "parser.h"
 #include "macros.h"
+#include "checker.h"
 #include "evm-encoder.h"
 #include "shl/shl-defs.h"
 #define SHL_STR_IMPLEMENTATION
@@ -152,6 +153,14 @@ static Config config_create(i32 argc, char **argv) {
   return config;
 }
 
+static void funcs_free(Funcs *funcs) {
+  for (u32 i = 0; i < funcs->len; ++i)
+    if (funcs->items[i].vars.items)
+      free(funcs->items[i].vars.items);
+  if (funcs->items)
+    free(funcs->items);
+}
+
 static void config_destroy(Config *config) {
   if (config->is_output_path_malloced)
     free(config->output_path);
@@ -188,19 +197,22 @@ i32 main(i32 argc, char **argv) {
                       0, 0, false);
 
   Funcs funcs = {0};
-  Func func0 = { &ast.items[0]->as.func, {} };
-  Var var0 = { STR_LIT("a"), {} };
-  DA_APPEND(func0.vars, var0);
-  Var var1 = { STR_LIT("b"), {} };
-  DA_APPEND(func0.vars, var1);
-  DA_APPEND(funcs, func0);
-  Func func1 = { &ast.items[1]->as.func, {} };
-  DA_APPEND(funcs, func1);
+  if (!check(&ast, &funcs, &arena)) {
+    funcs_free(&funcs);
+    arena_free(&arena);
+    if (macros.items)
+      free(macros.items);
+    cached_asts_destroy(&cached_asts);
+    free(code.ptr);
+    config_destroy(&config);
+    return 1;
+  }
 
   remove(config.ir_path);
   FILE *ir_file = fopen(config.ir_path, "wb");
   if (!ir_file) {
     ERROR("Could not write %s\n", config.ir_path);
+    funcs_free(&funcs);
     arena_free(&arena);
     if (macros.items)
       free(macros.items);
@@ -256,6 +268,7 @@ i32 main(i32 argc, char **argv) {
 
 end:
   free(sb.buffer);
+  funcs_free(&funcs);
   arena_free(&arena);
   if (macros.items)
     free(macros.items);

@@ -94,8 +94,8 @@ static void clone_expr(Expr **expr, Strs *arg_names, Arena *arena) {
   case ExprKindIdent: break;
 
   case ExprKindFunc: {
-    ErArg *new_items = arena_alloc(arena, new_expr->as.func.args.len * sizeof(ErArg));
-    memcpy(new_items, new_expr->as.func.args.items, new_expr->as.func.args.len * sizeof(ErArg));
+    Str *new_items = arena_alloc(arena, new_expr->as.func.args.len * sizeof(Str));
+    memcpy(new_items, new_expr->as.func.args.items, new_expr->as.func.args.len * sizeof(Str));
     new_expr->as.func.args.items = new_items;
 
     clone_block(&new_expr->as.func.body, arg_names, arena);
@@ -170,8 +170,8 @@ static void rename_args_expr(Expr *expr, Strs *prev_arg_names,
   case ExprKindFunc: {
     for (u32 i = 0; i < expr->as.func.args.len; ++i) {
       for (u32 j = 0; j < prev_arg_names->len; ++j) {
-        if (str_eq(expr->as.func.args.items[i].name, prev_arg_names->items[j])) {
-          expr->as.func.args.items[i].name = new_arg_names->items[j];
+        if (str_eq(expr->as.func.args.items[i], prev_arg_names->items[j])) {
+          expr->as.func.args.items[i] = new_arg_names->items[j];
 
           break;
         }
@@ -290,7 +290,7 @@ static bool try_inline_macro_arg(Expr **expr, Strs *arg_names,
   if ((*expr)->kind == ExprKindFunc) {
     try_replace_macro_arg_ident(&(*expr)->as.func.name, arg_names, args);
     for (u32 i = 0; i < (*expr)->as.func.args.len; ++i)
-      try_replace_macro_arg_ident(&(*expr)->as.func.args.items[i].name, arg_names, args);
+      try_replace_macro_arg_ident(&(*expr)->as.func.args.items[i], arg_names, args);
 
     return false;
   }
