@@ -1104,8 +1104,19 @@ void parse_header_deps_internal(Strs *result, Str src, Str cflags) {
         };
         Str full_path = get_header_full_path(path, src, cflags);
         if (full_path.len != (u32) -1) {
-          DA_APPEND(*result, full_path);
-          parse_header_deps_internal(result, full_path, cflags);
+          bool visited = false;
+
+          for (u32 j = 0; j < result->len; ++j) {
+            if (str_eq(result->items[j], full_path)) {
+              visited = true;
+              break;
+            }
+          }
+
+          if (!visited) {
+            DA_APPEND(*result, full_path);
+            parse_header_deps_internal(result, full_path, cflags);
+          }
         }
       }
     }
@@ -1174,10 +1185,13 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
     Dep dep = { NULL, false };
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
+      Str target_file = expand_value(build_config, build_config->targets.items[j].file);
       if (str_eq(build_config->targets.items[j].file, deps.items[i])) {
         dep.target = build_config->targets.items + j;
+        free(target_file.ptr);
         break;
       }
+      free(target_file.ptr);
     }
 
     if (dep.target)
@@ -1193,10 +1207,13 @@ static TargetBuildInfo *get_target_build_info(BuildConfig *build_config, Target 
     Dep dep = { NULL, true };
 
     for (u32 j = 0; j < build_config->targets.len; ++j) {
-      if (str_eq(build_config->targets.items[j].file, ghost_deps.items[i])) {
+      Str target_file = expand_value(build_config, build_config->targets.items[j].file);
+      if (str_eq(target_file, ghost_deps.items[i])) {
         dep.target = build_config->targets.items + j;
+        free(target_file.ptr);
         break;
       }
+      free(target_file.ptr);
     }
 
     if (dep.target)
