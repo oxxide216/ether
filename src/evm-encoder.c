@@ -222,8 +222,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     Instr instr;
     if (opt) {
-      index = get_func_index(encoder->funcs, expr->as.func_call.func->as.ident.name);
-      Str name = mangle_func_name(encoder->funcs->items + index);
+      u32 func_index = get_func_index(encoder->funcs, expr->as.func_call.func->as.ident.name);
+      Str name = mangle_func_name(encoder->funcs->items + func_index);
       if (dest_index == (u32) -1) {
         instr = (Instr) {
           InstrKindCall,
@@ -235,11 +235,17 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           },
         };
       } else {
+        Var *var = encoder->vars->items + dest_index;
+        u32 size = get_type_size(var->type);
+        ValueKind kind = get_type_value_kind(var->type);
+
         instr = (Instr) {
           InstrKindCallAssign,
           {
             .call_assign = {
               dest_index,
+              size,
+              kind,
               name,
               arg_indices,
             },
@@ -258,9 +264,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           },
         };
       } else {
-        Var *var = encoder->vars->items + index;
-        u32 size = get_type_size(var->type->return_type);
-        ValueKind kind = get_type_value_kind(var->type->return_type);
+        Var *var = encoder->vars->items + dest_index;
+        u32 size = get_type_size(var->type);
+        ValueKind kind = get_type_value_kind(var->type);
 
         instr = (Instr) {
           InstrKindCallRefAssign,
@@ -543,6 +549,8 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
 
       case InstrKindCallAssign: {
         fwrite(&instr->as.call_assign.dest_index, sizeof(instr->as.call_assign.dest_index), 1, stream);
+        fwrite(&instr->as.call_assign.return_size, sizeof(instr->as.call_assign.return_size), 1, stream);
+        fwrite(&instr->as.call_assign.return_kind, 1, 1, stream);
 
         encode_str(stream, instr->as.call_assign.name);
         fwrite(&instr->as.call_assign.arg_indices.len, sizeof(instr->as.call_assign.arg_indices.len), 1, stream);
@@ -622,8 +630,12 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
   for (u32 i = 0; i < encoder.data.len; ++i) {
     DataEntry *entry = encoder.data.items + i;
 
+    u32 len = entry->len + 5; // Size and null-terminator
+    u8 zero = 0;
+    fwrite(&len, sizeof(len), 1, stream);
     fwrite(&entry->len, sizeof(entry->len), 1, stream);
     fwrite(entry->data, 1, entry->len, stream);
+    fwrite(&zero, 1, 1, stream);
   }
 
   u32 imports_len = 0;
