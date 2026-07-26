@@ -109,7 +109,7 @@ u32 get_type_size(Type *type) {
   case TypeKindFunc: return 8;
   case TypeKindInt:  return 8;
   case TypeKindBool: return 4;
-  case TypeKindStr:  return 16;
+  case TypeKindStr:  return 8;
   case TypeKindAny:  return 0;
   }
 

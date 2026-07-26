@@ -11,6 +11,7 @@
 #define EVM_PREFIX  "libs/e/evm -o "
 #define YASM_PREFIX "yasm -felf64 -o "
 #define LD_PREFIX   "ld -o "
+#define RUNTIME     " build/runtime.o"
 
 typedef struct {
   char *input_path;
@@ -222,7 +223,7 @@ i32 main(i32 argc, char **argv) {
     return 1;
   }
 
-  encode_ast_as_evm_ir(ir_file, &funcs);
+  encode_ast_as_evm_ir(ir_file, &arena, &funcs);
 
   fclose(ir_file);
 
@@ -259,6 +260,7 @@ i32 main(i32 argc, char **argv) {
   sb_push(&sb, config.output_path);
   sb_push_char(&sb, ' ');
   sb_push(&sb, config.obj_path);
+  sb_push(&sb, RUNTIME);
   sb_push_char(&sb, '\0');
 
   if (system(sb.buffer) != 0) {

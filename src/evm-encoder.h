@@ -3,6 +3,6 @@
 
 #include "ast.h"
 
-void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs);
+void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs);
 
 #endif // EVM_ENCODER_H

@@ -7,6 +7,8 @@
 
 typedef Da(Str) Strs;
 
+typedef struct BuiltIn BuiltIn;
+
 typedef enum {
   TypeKindUnit = 0,
   TypeKindFunc,
@@ -23,9 +25,10 @@ struct Type {
   TypeKind kind;
   union {
     struct {
-      Type  *return_type;
-      Types  arg_types;
-      u32    func_index;
+      Type    *return_type;
+      Types    arg_types;
+      u32      func_index;
+      BuiltIn *built_in;
     };
   };
 };
@@ -71,8 +74,9 @@ typedef struct {
 } ExprFunc;
 
 typedef struct {
-  Expr  *func;
-  Exprs  args;
+  Expr    *func;
+  Exprs    args;
+  BuiltIn *built_in;
 } ExprFuncCall;
 
 typedef struct {

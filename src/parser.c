@@ -4,31 +4,13 @@
 
 #include "parser.h"
 #include "io.h"
+#include "utils.h"
 #include "lexgen/runtime.h"
 #define LEXGEN_TRANSITION_TABLE_IMPLEMENTATION
 #include "grammar.h"
 #include "shl/shl-log.h"
 
 #define MASK(id) (1lu << (id))
-
-#define DA_ARENA_APPEND(da, element, arena)                               \
-  do {                                                                    \
-    if ((da).cap <= (da).len) {                                           \
-      if ((da).cap != 0) {                                                \
-        while ((da).cap <= (da).len)                                      \
-          (da).cap *= 2;                                                  \
-        void *new_items = arena_alloc(arena, sizeof(element) * (da).cap); \
-        memcpy(new_items,                                                 \
-              (da).items,                                                 \
-              (da).len * sizeof(element));                                \
-        (da).items = new_items;                                           \
-      } else {                                                            \
-        (da).cap = 1;                                                     \
-        (da).items = arena_alloc(arena, sizeof(element));                 \
-      }                                                                   \
-    }                                                                     \
-    (da).items[(da).len++] = element;                                     \
-  } while (false)
 
 typedef enum {
   TokenStatusOk = 0,
@@ -49,6 +31,7 @@ typedef struct {
   u32              row, col;
   TransitionTable *table;
   StringBuilder    temp_sb;
+  Arena           *arena;
 } Lexer;
 
 typedef struct {
@@ -271,7 +254,9 @@ static TokenStatus lex(Lexer *lexer, Token *token, Str file_path) {
       --lexer->code.len;
       ++lexer->col;
 
-      lexeme = sb_to_str(lexer->temp_sb);
+      lexeme.len = lexer->temp_sb.len;
+      lexeme.ptr = arena_alloc(lexer->arena, lexeme.len);
+      memcpy(lexeme.ptr, lexer->temp_sb.buffer, lexeme.len);
 
       lexer->temp_sb.len = 0;
     } else {
@@ -377,6 +362,7 @@ Exprs parse_ex(Str code, Str file_path, Macros *macros,
   Lexer lexer = {0};
   lexer.code = code;
   lexer.table = get_transition_table();
+  lexer.arena = arena;
 
   TokenStatus status = TokenStatusEmpty;
   Token token;
@@ -759,6 +745,7 @@ static Expr *parser_parse_expr(Parser *parser) {
     default: {
       expr->kind = ExprKindFuncCall;
       expr->as.func_call.func = parser_parse_expr(parser);
+      expr->as.func_call.built_in = NULL;
 
       Token *token = parser_peek_token(parser);
       while (token && token->id != TT_CPAREN) {

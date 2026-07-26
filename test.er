@@ -1,5 +1,2 @@
 (fun main ()
-  (sub 2 2))
-
-(fun sub (a b)
-  (- a b))
+  (println "Hello, World!"))

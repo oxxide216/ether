@@ -8,6 +8,11 @@ ghost_deps = libs/e/evm src/grammar.h
 cflags = $cflags
 incpath = $build_dir
 
+[$build_dir/runtime.o]
+type = custom
+cmd = yasm -f elf64 -o $build_dir/runtime.o runtime/*.s
+src = runtime/*.s
+
 [libs/e/evm]
 type = custom
 cmd = ./nsb libs/e -a

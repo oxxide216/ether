@@ -1,4 +1,6 @@
 #include "checker.h"
+#include "built-ins.h"
+#include "utils.h"
 #include "shl/shl-log.h"
 
 #define CERROR(expr, fmt)                \
@@ -92,6 +94,14 @@ bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
   return true;
 }
 
+BuiltIn *get_built_in(Str name) {
+  for (u32 i = 0; i < built_ins_len; ++i)
+    if (str_eq(built_ins[i].name, name))
+      return built_ins + i;
+
+  return NULL;
+}
+
 Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena);
 bool  check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena);
 
@@ -139,6 +149,20 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     if (func_expr)
       return add_func(func_expr, checker->funcs, checker->arena);
 
+    BuiltIn *built_in = get_built_in(expr->as.ident.name);
+    if (built_in) {
+      Type *result = arena_alloc(checker->arena, sizeof(Type));
+      result->kind = TypeKindFunc;
+      result->return_type = &built_in->return_type;
+      result->arg_types.len = built_in->args_len;
+      result->arg_types.cap = result->arg_types.len;
+      result->arg_types.items = arena_alloc(checker->arena, result->arg_types.cap * sizeof(Type *));
+      for (u32 i = 0; i < result->arg_types.len; ++i)
+        result->arg_types.items[i] = built_in->arg_types + i;
+      result->built_in = built_in;
+      return result;
+    }
+
     CERRORF(expr, "Symbol "STR_FMT" was not defined before usage\n",
             STR_ARG(expr->as.ident.name));
     return NULL;
@@ -152,26 +176,32 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindFuncCall: {
+    bool opt = expr->as.func_call.func->kind == ExprKindIdent;
+    if (opt)
+      opt = get_var_index(&checker->vars, checker->vars.len,
+                          expr->as.func_call.func->as.ident.name) == (u32) -1;
+
+    u32 var_index = checker->vars.len;
+    if (!opt) {
+      Var var = {
+        {},
+        NULL,
+      };
+      DA_APPEND(checker->vars, var);
+    }
+
     Type *func_type = check_expr(expr->as.func_call.func, checker, true);
+    if (!func_type)
+      return NULL;
+
+    if (!opt)
+      checker->vars.items[var_index].type = func_type;
 
     if (expr->as.func_call.args.len != func_type->arg_types.len) {
       CERRORF(expr, "Invalid arguments count: %u/%u\n",
               expr->as.func_call.args.len,
               func_type->arg_types.len);
       return NULL;
-    }
-
-    bool opt = expr->as.func_call.func->kind == ExprKindIdent;
-    if (opt)
-      opt = get_var_index(&checker->vars, checker->vars.len,
-                          expr->as.func_call.func->as.ident.name) == (u32) -1;
-
-    if (!opt) {
-      Var var = {
-        {},
-        func_type,
-      };
-      DA_APPEND(checker->vars, var);
     }
 
     bool updated_func = false;
@@ -181,6 +211,22 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     for (u32 i = 0; i < args->len; ++i) {
       Type *arg_type = check_expr(args->items[i], checker, true);
       DA_APPEND(arg_types, arg_type);
+    }
+
+    if (func_type->built_in) {
+      for (u32 i = 0; i < args->len; ++i) {
+        Var var = {
+          {},
+          arg_types.items[i],
+        };
+        DA_APPEND(checker->vars, var);
+      }
+
+      if (arg_types.items)
+        free(arg_types.items);
+
+      expr->as.func_call.built_in = func_type->built_in;
+      return func_type->return_type;
     }
 
     for (u32 i = 0; i < args->len; ++i) {
@@ -522,6 +568,27 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
   add_func(main_expr, funcs, arena);
   if (!check_func(0, funcs, &protos, arena))
     goto fail;
+
+  Type *main_return_type = funcs->items[0].type->return_type;
+  if (main_return_type->kind != TypeKindInt) {
+    if (main_return_type->kind == TypeKindUnit) {
+      Expr *expr0 = arena_alloc(arena, sizeof(Expr));
+      expr0->kind = ExprKindInt;
+      expr0->as._int._int = 0;
+
+      Expr *expr1 = arena_alloc(arena, sizeof(Expr));
+      expr1->kind = ExprKindRet;
+      expr1->as.ret.value = expr0;
+
+      DA_ARENA_APPEND(main_expr->body, expr1, arena);
+    } else {
+      Str main_return_type_str = get_type_str(main_return_type);
+      ERROR("Unexpected `main` function return type: "STR_FMT", expected int\n",
+            STR_ARG(main_return_type_str));
+      free_type_str(main_return_type_str, main_return_type);
+      goto fail;
+    }
+  }
 
   if (protos.items)
     free(protos.items);

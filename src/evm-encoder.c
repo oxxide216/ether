@@ -1,8 +1,10 @@
 #include "evm-encoder.h"
 #include "evm/ir.h"
+#include "built-ins.h"
 
 typedef struct {
   FILE   *stream;
+  Arena  *arena;
   Funcs  *funcs;
   Instrs  instrs;
   Data    data;
@@ -115,9 +117,10 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     DA_APPEND(encoder->instrs, instr);
 
     DataEntry entry = {
-      (u8 *) expr->as.str.str.ptr,
+      arena_alloc(encoder->arena, expr->as.str.str.len),
       expr->as.str.str.len,
     };
+    memcpy(entry.data, expr->as.str.str.ptr, entry.len);
     DA_APPEND(encoder->data, entry);
   } break;
 
@@ -173,7 +176,12 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     u32 index = get_var_index(encoder->vars, encoder->vars_defined, expr->as.ident.name);
     if (index == (u32) -1) {
       index = get_func_index(encoder->funcs, expr->as.ident.name);
-      Str name = mangle_func_name(encoder->funcs->items + index);
+      Str temp_name = mangle_func_name(encoder->funcs->items + index);
+      Str name;
+      name.len = temp_name.len;
+      name.ptr = arena_alloc(encoder->arena, name.len);
+      memcpy(name.ptr, temp_name.ptr, name.len);
+      free(temp_name.ptr);
       Instr instr = {
         InstrKindRefProc,
         {
@@ -222,8 +230,17 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     Instr instr;
     if (opt) {
-      u32 func_index = get_func_index(encoder->funcs, expr->as.func_call.func->as.ident.name);
-      Str name = mangle_func_name(encoder->funcs->items + func_index);
+      Str name;
+      if (expr->as.func_call.built_in) {
+        name = expr->as.func_call.built_in->name;
+      } else {
+        u32 func_index = get_func_index(encoder->funcs, expr->as.func_call.func->as.ident.name);
+        Str temp_name = mangle_func_name(encoder->funcs->items + func_index);
+        name.len = temp_name.len;
+        name.ptr = arena_alloc(encoder->arena, name.len);
+        memcpy(name.ptr, temp_name.ptr, name.len);
+        free(temp_name.ptr);
+      }
       if (dest_index == (u32) -1) {
         instr = (Instr) {
           InstrKindCall,
@@ -461,11 +478,12 @@ static void encode_block(Encoder *encoder, Exprs *block,
   }
 }
 
-void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
+void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
   fwrite(&funcs->len, sizeof(funcs->len), 1, stream);
 
   Encoder encoder = {0};
   encoder.stream = stream;
+  encoder.arena = arena;
   encoder.funcs = funcs;
 
   for (u32 i = 0; i < funcs->len; ++i) {
@@ -638,19 +656,10 @@ void encode_ast_as_evm_ir(FILE *stream, Funcs *funcs) {
     fwrite(&zero, 1, 1, stream);
   }
 
-  u32 imports_len = 0;
-  fwrite(&imports_len, sizeof(imports_len), 1, stream);
+  fwrite(&built_ins_len, sizeof(built_ins_len), 1, stream);
+  for (u32 i = 0; i < built_ins_len; ++i)
+    encode_str(encoder.stream, built_ins[i].name);
 
-  for (u32 i = 0; i < encoder.instrs.len; ++i) {
-    Instr *instr = encoder.instrs.items + i;
-
-    if (instr->kind == InstrKindRefProc)
-      free(instr->as.ref_proc.proc_name.ptr);
-    else if (instr->kind == InstrKindCall)
-      free(instr->as.call.name.ptr);
-    else if (instr->kind == InstrKindCallAssign)
-      free(instr->as.call_assign.name.ptr);
-  }
   if (encoder.instrs.items)
     free(encoder.instrs.items);
 
