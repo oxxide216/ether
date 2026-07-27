@@ -89,6 +89,8 @@ ether_alloc:
   push rbx
   push r10
 
+  add rdi, 4
+
   mov r9, 0
   mov r8, -1
   mov r10, 34
@@ -109,8 +111,46 @@ ether_alloc:
   jmp .loop_begin
 .loop_end:
 
+  add rax, 4
+
   pop r10
   pop rbx
+  ret
+
+ether_free_4:
+  mov esi, [rdi+4]
+  add esi, 6
+  mov rax, 11
+  syscall
+
+  ret
+
+global ether_rc_inc_4
+ether_rc_inc_4:
+  mov rsi, rdi
+  mov edx, [rdi]
+  add rsi, rdx
+  add rsi, 5
+  cmp byte [rsi], 1
+  je .skip_static
+  inc dword [rdi-4]
+.skip_static:
+
+  ret
+
+global ether_rc_dec_4
+ether_rc_dec_4:
+  mov rsi, rdi
+  mov edx, [rdi]
+  add rsi, rdx
+  add rsi, 5
+  cmp byte [rsi], 1
+  je .skip_static
+  dec dword [rdi-4]
+  cmp dword[rdi-4], 0
+  jle ether_free_4
+.skip_static:
+
   ret
 
 global ether_value_to_str_2

@@ -96,6 +96,72 @@ static Str mangle_func_name(Func *func) {
   return sb_to_str(sb);
 }
 
+static bool type_is_rc(Type *type) {
+  return type->kind == TypeKindStr;
+}
+
+static void try_gen_rc_inc(Encoder *encoder, u32 index) {
+  if (type_is_rc(encoder->vars->items[index].type)) {
+    StringBuilder sb = {0};
+    sb_push_str(&sb, STR_LIT("ether_rc_inc_"));
+    sb_push_type_hash(&sb, encoder->vars->items[index].type);
+
+    Indices arg_indices;
+    arg_indices.len = 1;
+    arg_indices.cap = arg_indices.len;
+    arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+    arg_indices.items[0] = index;
+
+    Str name;
+    name.len = sb.len;
+    name.ptr = arena_alloc(encoder->arena, name.len);
+    memcpy(name.ptr, sb.buffer, name.len);
+    free(sb.buffer);
+
+    Instr instr = {
+      InstrKindCall,
+      {
+        .call = {
+          name,
+          arg_indices,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+  }
+}
+
+static void try_gen_rc_dec(Encoder *encoder, u32 index) {
+  if (type_is_rc(encoder->vars->items[index].type)) {
+    StringBuilder sb = {0};
+    sb_push_str(&sb, STR_LIT("ether_rc_dec_"));
+    sb_push_type_hash(&sb, encoder->vars->items[index].type);
+
+    Indices arg_indices;
+    arg_indices.len = 1;
+    arg_indices.cap = arg_indices.len;
+    arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+    arg_indices.items[0] = index;
+
+    Str name;
+    name.len = sb.len;
+    name.ptr = arena_alloc(encoder->arena, name.len);
+    memcpy(name.ptr, sb.buffer, name.len);
+    free(sb.buffer);
+
+    Instr instr = {
+      InstrKindCall,
+      {
+        .call = {
+          name,
+          arg_indices,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+  }
+}
+
 static void encode_block(Encoder *encoder, Exprs *block,
                          u32 dest_index, bool last_is_return);
 
@@ -225,6 +291,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     for (u32 i = 0; i < expr->as.func_call.args.len; ++i) {
       u32 arg_index = define_var(encoder);
       encode_expr(encoder, expr->as.func_call.args.items[i], arg_index);
+      try_gen_rc_inc(encoder, arg_index);
       DA_APPEND(arg_indices, arg_index);
     }
 
@@ -305,6 +372,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   case ExprKindLet: {
     u32 index = define_var(encoder);
     encode_expr(encoder, expr->as.let.value, index);
+
+    try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
       Instr instr = {
@@ -394,7 +463,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   } break;
 
   case ExprKindBinOp: {
-    if (dest_index == (u32) -1 || expr->as.bin_op.args.len < 2)
+    if (dest_index == (u32) -1)
       break;
 
     u32 temp_dest_index = dest_index;
@@ -454,7 +523,11 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   } break;
 
   case ExprKindFStr: {
-    u32 start_size = 5; // Size (because strings are pascal-like) and null-terminator
+    if (dest_index == (u32) -1)
+      break;
+
+    // Size (because strings are pascal-like), null-terminator and non-static marker
+    u32 start_size = 6;
 
     for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
       FStrPart *part = expr->as.fstr.parts.items + i;
@@ -564,7 +637,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           {
             ValueKindUnsigned,
             {
-              ._unsigned = 5,
+              ._unsigned = 6,
             },
           },
         },
@@ -752,6 +825,12 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     encode_type(stream, func->type->return_type);
 
     encode_block(&encoder, &func->expr->body, (u32) -1, true);
+
+    for (u32 j = encoder.vars->len; j > 0; --j)
+      if (encoder.vars->items[j - 1].name.len > 0 ||
+          encoder.vars->items[j - 1].is_arg)
+        try_gen_rc_dec(&encoder, j - 1);
+
     fwrite(&encoder.instrs.len, sizeof(encoder.instrs.len), 1, stream);
     for (u32 j = 0; j < encoder.instrs.len; ++j) {
       Instr *instr = encoder.instrs.items + j;
@@ -903,10 +982,12 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       }
     }
 
-    for (u32 i = 0; i < encoder.instrs.len; ++i) {
-      Instr *instr = encoder.instrs.items + i;
+    for (u32 j = 0; j < encoder.instrs.len; ++j) {
+      Instr *instr = encoder.instrs.items + j;
 
-      if (instr->kind == InstrKindCopyToRefFixed)
+      if (instr->kind == InstrKindAlloc)
+        free(instr->as.alloc.segments.items);
+      else if (instr->kind == InstrKindCopyToRefFixed)
         free(instr->as.copy_to_ref_fixed.dest_segments.items);
     }
   }
@@ -915,12 +996,14 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
   for (u32 i = 0; i < encoder.data.len; ++i) {
     DataEntry *entry = encoder.data.items + i;
 
-    u32 len = entry->len + 5; // Size and null-terminator
+    u32 len = entry->len + 6; // Size, null-terminator and static marker
     u8 zero = 0;
+    u8 one = 1;
     fwrite(&len, sizeof(len), 1, stream);
     fwrite(&entry->len, sizeof(entry->len), 1, stream);
     fwrite(entry->data, 1, entry->len, stream);
     fwrite(&zero, 1, 1, stream);
+    fwrite(&one, 1, 1, stream);
   }
 
   fwrite(&built_ins_len, sizeof(built_ins_len), 1, stream);

@@ -12,6 +12,8 @@ BuiltIn built_ins[] = {
   { STR_LIT("ether_value_to_str_2"), TYPE(TypeKindInt), 3, { TYPE(TypeKindInt), TYPE(TypeKindInt), TYPE(TypeKindInt) } },
   { STR_LIT("ether_value_to_str_3"), TYPE(TypeKindInt), 3, { TYPE(TypeKindInt), TYPE(TypeKindInt), TYPE(TypeKindBool) } },
   { STR_LIT("ether_value_to_str_4"), TYPE(TypeKindInt), 3, { TYPE(TypeKindInt), TYPE(TypeKindInt), TYPE(TypeKindStr) } },
+  { STR_LIT("ether_rc_inc_4"), TYPE(TypeKindInt), 1, { TYPE(TypeKindStr) } },
+  { STR_LIT("ether_rc_dec_4"), TYPE(TypeKindInt), 1, { TYPE(TypeKindStr) } },
 };
 
 u32 built_ins_len = ARRAY_LEN(built_ins);

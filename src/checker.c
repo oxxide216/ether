@@ -185,6 +185,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       Var var = {
         {},
         NULL,
+        false,
       };
       DA_APPEND(checker->vars, var);
     }
@@ -209,7 +210,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     u32 vars_start = checker->vars.len;
 
     for (u32 i = 0; i < args->len; ++i) {
-      Var var = { {}, NULL };
+      Var var = { {}, NULL, true };
       DA_APPEND(checker->vars, var);
 
       Type *arg_type = check_expr(args->items[i], checker, true);
@@ -294,6 +295,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     Var var = {
       expr->as.let.name,
       type,
+      false,
     };
     DA_APPEND(checker->vars, var);
 
@@ -344,6 +346,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     Var var = {
       {},
       return_type,
+      false,
     };
     DA_APPEND(checker->vars, var);
 
@@ -369,6 +372,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     Var var = {
       {},
       cond_type,
+      false,
     };
     DA_APPEND(checker->vars, var);
 
@@ -420,10 +424,11 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
         if (!type_narrow(expr->as.bin_op.args.items[i], arg_type, &type, true))
           return NULL;
 
-        if (expr->as.bin_op.args.len > 2) {
+        if (expr->as.bin_op.args.len > 2 && value_expected) {
           Var var = {
             {},
             first_arg_type,
+            false,
           };
           DA_APPEND(checker->vars, var);
         }
@@ -432,11 +437,14 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
           return NULL;
       }
 
-      Var var = {
-        {},
-        arg_type,
-      };
-      DA_APPEND(checker->vars, var);
+      if (value_expected) {
+        Var var = {
+          {},
+          arg_type,
+          false,
+        };
+        DA_APPEND(checker->vars, var);
+      }
     }
 
     if (expr->as.bin_op.kind >= ErBinOpKindEq && expr->as.bin_op.kind <= ErBinOpKindGe) {
@@ -452,10 +460,12 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     Type *type = arena_alloc(checker->arena, sizeof(Type));
     type->kind = TypeKindInt;
 
-    Var var = { {}, type };
+    Var var = { {}, type, false };
 
-    DA_APPEND(checker->vars, var);
-    DA_APPEND(checker->vars, var);
+    if (value_expected) {
+      DA_APPEND(checker->vars, var);
+      DA_APPEND(checker->vars, var);
+    }
 
     for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
       FStrPart *part = expr->as.fstr.parts.items + i;
@@ -478,7 +488,8 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       }
     }
 
-    DA_APPEND(checker->vars, var);
+    if (value_expected)
+      DA_APPEND(checker->vars, var);
 
     Type *result = arena_alloc(checker->arena, sizeof(Type));
     result->kind = TypeKindStr;
@@ -544,6 +555,7 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
     Var var = {
       func->expr->args.items[i],
       func->type->arg_types.items[i],
+      true,
     };
     DA_APPEND(checker.vars, var);
   }
@@ -560,7 +572,7 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
     bool is_last_ret = func->expr->body.items[func->expr->body.len - 1]->kind == ExprKindRet;
 
     if (!is_last_ret && !str_eq(func->expr->name, STR_LIT("main"))) {
-      Var var = { {}, checker.return_type };
+      Var var = { {}, checker.return_type, false };
       DA_APPEND(checker.vars, var);
     }
 
@@ -620,6 +632,11 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
   Type *main_return_type = funcs->items[0].type->return_type;
   if (main_return_type->kind != TypeKindInt) {
     if (main_return_type->kind == TypeKindUnit) {
+      main_return_type->kind = TypeKindInt;
+
+      Var var = { {}, main_return_type, false };
+      DA_APPEND(funcs->items[0].vars, var);
+
       Expr *expr0 = arena_alloc(arena, sizeof(Expr));
       expr0->kind = ExprKindInt;
       expr0->as._int._int = 0;

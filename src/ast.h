@@ -160,6 +160,7 @@ struct Expr {
 typedef struct {
   Str   name;
   Type *type;
+  bool  is_arg;
 } Var;
 
 typedef Da(Var) Vars;
