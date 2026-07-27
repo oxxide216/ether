@@ -107,7 +107,7 @@ bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
 
 BuiltIn *get_built_in(Str name) {
   for (u32 i = 0; i < built_ins_len; ++i)
-    if (str_eq(built_ins[i].name, name))
+    if (!built_ins[i].is_internal && str_eq(built_ins[i].name, name))
       return built_ins + i;
 
   return NULL;

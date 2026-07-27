@@ -6,6 +6,7 @@
 #define BUILT_INS_ARGS_MAX 10
 
 struct BuiltIn {
+  bool is_internal;
   Str  name;
   Type return_type;
   u32  args_len;
