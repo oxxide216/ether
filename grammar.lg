@@ -21,6 +21,7 @@ perc=%
 oparen=\(
 cparen=\)
 str="|'
+fstr=f("|')
 unpack=...
 
 int=\-?0-9+

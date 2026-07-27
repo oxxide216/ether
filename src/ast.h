@@ -49,6 +49,7 @@ typedef enum {
   ExprKindRet,
   ExprKindIf,
   ExprKindBinOp,
+  ExprKindFStr,
 } ExprKind;
 
 typedef struct  {
@@ -118,6 +119,17 @@ typedef struct {
   Exprs       args;
 } ExprBinOp;
 
+typedef struct {
+  bool is_var;
+  Str  str;
+} FStrPart;
+
+typedef Da(FStrPart) FStrParts;
+
+typedef struct {
+  FStrParts parts;
+} ExprFStr;
+
 typedef union {
   ExprStr      str;
   ExprInt      _int;
@@ -131,6 +143,7 @@ typedef union {
   ExprRet      ret;
   ExprIf       _if;
   ExprBinOp    bin_op;
+  ExprFStr     fstr;
 } ExprAs;
 
 typedef struct {
@@ -159,8 +172,6 @@ typedef struct {
 } Func;
 
 typedef Da(Func) Funcs;
-
-Exprs ast_clone(Exprs *ast, Arena *arena);
 
 Type type_clone(Type *type, Arena *arena);
 bool type_eq(Type *a, Type *b);

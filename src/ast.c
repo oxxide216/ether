@@ -3,66 +3,6 @@
 #define DEST_APPEND(converter, instr)               \
   DA_APPEND(converter->current_func->instrs, instr) \
 
-static Expr *ast_node_clone(Expr *node, Arena *arena) {
-  Expr *copy = arena_alloc(arena, sizeof(Expr));
-  copy->kind = node->kind;
-
-  switch (node->kind) {
-  case ExprKindStr:  break;
-  case ExprKindInt:  break;
-  case ExprKindBool: break;
-
-  case ExprKindBlock: {
-    copy->as.block = ast_clone(&node->as.block, arena);
-  } break;
-
-  case ExprKindIdent: break;
-
-  case ExprKindFunc: {
-    copy->as.block = ast_clone(&node->as.block, arena);
-  } break;
-
-  case ExprKindFuncCall: {
-    copy->as.func_call.args = ast_clone(&node->as.func_call.args, arena);
-  } break;
-
-  case ExprKindLet: {
-    copy->as.let.value = ast_node_clone(node->as.let.value, arena);
-  } break;
-
-  case ExprKindSet: {
-    copy->as.set.value = ast_node_clone(node->as.set.value, arena);
-  } break;
-
-  case ExprKindRet: {
-    copy->as.ret.value = ast_node_clone(node->as.ret.value, arena);
-  } break;
-
-  case ExprKindIf: {
-    copy->as._if.cond = ast_node_clone(node->as._if.cond, arena);
-    copy->as._if.if_body = ast_clone(&node->as._if.if_body, arena);
-    copy->as._if.else_body = ast_clone(&node->as._if.else_body, arena);
-  } break;
-
-  case ExprKindBinOp: {
-    copy->as.bin_op.args = ast_clone(&node->as.bin_op.args, arena);
-  } break;
-  }
-
-  return copy;
-}
-
-Exprs ast_clone(Exprs *ast, Arena *arena) {
-  Exprs copy;
-  copy.len = ast->len;
-  copy.items = arena_alloc(arena, copy.len * sizeof(Expr *));
-
-  for (u32 i = 0; i < ast->len; ++i)
-    copy.items[i] = ast_node_clone(ast->items[i], arena);
-
-  return copy;
-}
-
 Type type_clone(Type *type, Arena *arena) {
   Type new_type = *type;
   if (new_type.kind == TypeKindFunc) {

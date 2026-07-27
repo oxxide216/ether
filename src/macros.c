@@ -127,6 +127,16 @@ static void clone_expr(Expr **expr, Strs *arg_names, Arena *arena) {
   case ExprKindBinOp: {
     clone_block(&new_expr->as.bin_op.args, arg_names, arena);
   } break;
+
+  case ExprKindFStr: {
+    new_expr->as.fstr.parts.len = (*expr)->as.fstr.parts.len;
+    new_expr->as.fstr.parts.cap = new_expr->as.fstr.parts.len;
+    new_expr->as.fstr.parts.items =
+      arena_alloc(arena, new_expr->as.fstr.parts.cap * sizeof(FStrPart));
+    memcpy(new_expr->as.fstr.parts.items,
+           (*expr)->as.fstr.parts.items,
+           new_expr->as.fstr.parts.len * sizeof(FStrPart));
+  } break;
   }
 }
 
@@ -231,6 +241,22 @@ static void rename_args_expr(Expr *expr, Strs *prev_arg_names,
 
   case ExprKindBinOp: {
     rename_args_block(&expr->as.bin_op.args, prev_arg_names, new_arg_names, arena);
+  } break;
+
+  case ExprKindFStr: {
+    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
+      FStrPart *part = expr->as.fstr.parts.items + i;
+      if (!part->is_var)
+        continue;
+
+      for (u32 j = 0; j < prev_arg_names->len; ++j) {
+        if (str_eq(part->str, prev_arg_names->items[j])) {
+          part->str = new_arg_names->items[j];
+
+          break;
+        }
+      }
+    }
   } break;
   }
 }
@@ -480,6 +506,8 @@ void expand_macros(Expr *expr, Macros *macros,
   case ExprKindBinOp: {
     INLINE_THEN_EXPAND_BLOCK(expr->as.bin_op.args);
   } break;
+
+  case ExprKindFStr: break;
   }
 
   if (arg_names && args && !is_inlined) {

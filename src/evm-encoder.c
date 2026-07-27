@@ -452,6 +452,250 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       DA_APPEND(encoder->instrs, instr);
     }
   } break;
+
+  case ExprKindFStr: {
+    u32 start_size = 5; // Size (because strings are pascal-like) and null-terminator
+
+    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
+      FStrPart *part = expr->as.fstr.parts.items + i;
+      if (!part->is_var)
+        start_size += part->str.len;
+    }
+
+    u32 size_index = define_var(encoder);
+    Instr instr = {
+      InstrKindStore,
+      {
+        .store = {
+          size_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = start_size,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 temp_size_index = define_var(encoder);
+
+    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
+      FStrPart *part = expr->as.fstr.parts.items + i;
+      if (!part->is_var)
+        continue;
+
+      u32 var_index = get_var_index(encoder->vars, encoder->vars_defined, part->str);
+
+      Indices arg_indices;
+      arg_indices.len = 1;
+      arg_indices.cap = arg_indices.len;
+      arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+      arg_indices.items[0] = var_index;
+
+      StringBuilder sb = {0};
+      sb_push_str(&sb, STR_LIT("ether_get_value_len_as_str_"));
+      sb_push_type_hash(&sb, encoder->vars->items[var_index].type);
+
+      Str name;
+      name.len = sb.len;
+      name.ptr = arena_alloc(encoder->arena, name.len);
+      memcpy(name.ptr, sb.buffer, name.len);
+      free(sb.buffer);
+
+      instr = (Instr) {
+        InstrKindCallAssign,
+        {
+          .call_assign = {
+            temp_size_index,
+            8,
+            ValueKindUnsigned,
+            name,
+            arg_indices,
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
+
+      instr = (Instr) {
+        InstrKindBinOp,
+        {
+          .bin_op = {
+            size_index,
+            size_index,
+            temp_size_index,
+            BinOpKindAddInt,
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
+    }
+
+    Var *var = encoder->vars->items + dest_index;
+    u32 size = get_type_size(var->type);
+    ValueKind kind = get_type_value_kind(var->type);
+
+    Indices arg_indices;
+    arg_indices.len = 1;
+    arg_indices.cap = arg_indices.len;
+    arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+    arg_indices.items[0] = size_index;
+
+    instr = (Instr) {
+      InstrKindCallAssign,
+      {
+        .call_assign = {
+          dest_index,
+          size,
+          kind,
+          STR_LIT("ether_alloc"),
+          arg_indices,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindStore,
+      {
+        .store = {
+          temp_size_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = 5,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindBinOp,
+      {
+        .bin_op = {
+          size_index,
+          size_index,
+          temp_size_index,
+          BinOpKindSubInt,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    Segments segments = {0};
+    AlignedSegment segment = { 0, 8 };
+    DA_APPEND(segments, segment);
+
+    instr = (Instr) {
+      InstrKindCopyToRefFixed,
+      {
+        .copy_to_ref_fixed = {
+          dest_index,
+          segments,
+          size_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindStore,
+      {
+        .store = {
+          size_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = 4,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
+      FStrPart *part = expr->as.fstr.parts.items + i;
+
+      Indices arg_indices;
+      arg_indices.len = 3;
+      arg_indices.cap = arg_indices.len;
+      arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+      arg_indices.items[0] = dest_index;
+      arg_indices.items[1] = size_index;
+
+      StringBuilder sb = {0};
+      if (part->is_var) {
+        u32 var_index = get_var_index(encoder->vars, encoder->vars_defined, part->str);
+
+        arg_indices.items[2] = var_index;
+
+        sb_push_str(&sb, STR_LIT("ether_value_to_str_"));
+        sb_push_type_hash(&sb, encoder->vars->items[var_index].type);
+      } else {
+        instr = (Instr) {
+          InstrKindStoreData,
+          {
+            .store_data = {
+              temp_size_index,
+              encoder->data.len,
+            },
+          },
+        };
+        DA_APPEND(encoder->instrs, instr);
+
+        DataEntry entry = {
+          arena_alloc(encoder->arena, part->str.len),
+          part->str.len,
+        };
+        memcpy(entry.data, part->str.ptr, entry.len);
+        DA_APPEND(encoder->data, entry);
+
+        arg_indices.items[2] = temp_size_index;
+
+        Type str_type = { TypeKindStr, {} };
+
+        sb_push_str(&sb, STR_LIT("ether_value_to_str_"));
+        sb_push_type_hash(&sb, &str_type);
+      }
+
+      Str name;
+      name.len = sb.len;
+      name.ptr = arena_alloc(encoder->arena, name.len);
+      memcpy(name.ptr, sb.buffer, name.len);
+      free(sb.buffer);
+
+      instr = (Instr) {
+        InstrKindCallAssign,
+        {
+          .call_assign = {
+            temp_size_index,
+            8,
+            ValueKindUnsigned,
+            name,
+            arg_indices,
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
+
+      instr = (Instr) {
+        InstrKindBinOp,
+        {
+          .bin_op = {
+            size_index,
+            size_index,
+            temp_size_index,
+            BinOpKindAddInt,
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
+    }
+  } break;
   }
 }
 
@@ -606,8 +850,24 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
         fwrite(&instr->as.store_data.data_index, sizeof(instr->as.store_data.data_index), 1, stream);
       } break;
 
-      case InstrKindConvert:
-      case InstrKindCopyToRefFixed:
+      case InstrKindConvert: {
+        fprintf(stderr, "Instr not yet implemented: %u\n", instr->kind);
+        exit(1);
+      }
+
+      case InstrKindCopyToRefFixed: {
+        fwrite(&instr->as.copy_to_ref_fixed.dest_index, sizeof(instr->as.copy_to_ref_fixed.dest_index), 1, stream);
+
+        Segments *segments = &instr->as.copy_to_ref_fixed.dest_segments;
+        fwrite(&segments->len, sizeof(segments->len), 1, stream);
+        for (u32 k = 0; k < segments->len; ++k) {
+          fwrite(&segments->items[k].offset, sizeof(segments->items[k].offset), 1, stream);
+          fwrite(&segments->items[k].size, sizeof(segments->items[k].size), 1, stream);
+        }
+
+        fwrite(&instr->as.copy_to_ref_fixed.src_index, sizeof(instr->as.copy_to_ref_fixed.src_index), 1, stream);
+      } break;
+
       case InstrKindCopyFromRefFixed: {
         fprintf(stderr, "Instr not yet implemented: %u\n", instr->kind);
         exit(1);
@@ -641,6 +901,13 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
         }
       } break;
       }
+    }
+
+    for (u32 i = 0; i < encoder.instrs.len; ++i) {
+      Instr *instr = encoder.instrs.items + i;
+
+      if (instr->kind == InstrKindCopyToRefFixed)
+        free(instr->as.copy_to_ref_fixed.dest_segments.items);
     }
   }
 

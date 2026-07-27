@@ -27,5 +27,209 @@ println:
 
   ret
 
+global ether_get_value_len_as_str_2
+ether_get_value_len_as_str_2:
+  cmp rdi, 0
+  jne .skip_zero
+  mov rax, 1
+  ret
+.skip_zero:
+
+  push rbx
+  push r10
+
+  mov rbx, 0
+
+  cmp rdi, 0
+  jge .skip_neg
+  inc rbx
+  mov rax, rdi
+  mov r10, -1
+  imul r10
+  mov rdi, rax
+.skip_neg:
+
+  mov r10, 10
+
+.loop_begin:
+  cmp rdi, 0
+  je .loop_end
+
+  mov rax, rdi
+  xor rdx, rdx
+  div r10
+  mov rdi, rax
+  inc rbx
+
+  jmp .loop_begin
+.loop_end:
+
+  mov rax, rbx
+  pop r10
+  pop rbx
+  ret
+
+global ether_get_value_len_as_str_3
+ether_get_value_len_as_str_3:
+  cmp rdi, 0
+  je .skip_true
+  mov rax, 4
+  ret
+.skip_true:
+  mov rax, 5
+  ret
+
+global ether_get_value_len_as_str_4
+ether_get_value_len_as_str_4:
+  mov eax, [rdi]
+  ret
+
+global ether_alloc
+ether_alloc:
+  push rbx
+  push r10
+
+  mov r9, 0
+  mov r8, -1
+  mov r10, 34
+  mov rdx, 3
+  mov rsi, rdi
+  mov rdi, 0
+  mov rax, 9
+  syscall
+
+  mov rbx, 0
+.loop_begin:
+  cmp rbx, rsi
+  jae .loop_end
+
+  mov byte [rax+rbx], 0
+  inc rbx
+
+  jmp .loop_begin
+.loop_end:
+
+  pop r10
+  pop rbx
+  ret
+
+global ether_value_to_str_2
+ether_value_to_str_2:
+  cmp rdx, 0
+  jne .skip_zero
+  mov byte [rdi+rsi], '0'
+  mov rax, 1
+  ret
+.skip_zero:
+
+  push rbx
+  push r10
+  push r11
+  push r12
+
+  mov rbx, rdi
+  mov rdi, rdx
+  mov r10, rdx
+  call ether_get_value_len_as_str_2
+  mov rdx, r10
+  mov rdi, rbx
+  dec rax
+
+  add rdi, rsi
+  add rdi, rax
+  mov r11, rdx
+  mov rbx, 0
+
+  mov r12, 0
+  cmp r11, 0
+  jge .skip_neg0
+  mov r12, 1
+  mov rax, r11
+  mov r10, -1
+  imul r10
+  mov r11, rax
+.skip_neg0:
+
+  mov r10, 10
+
+.loop_begin:
+  cmp r11, 0
+  je .loop_end
+
+  mov rax, r11
+  xor rdx, rdx
+  div r10
+  mov r11, rax
+  mov byte [rdi], '0'
+  add [rdi], dl
+  inc rbx
+  dec rdi
+
+  jmp .loop_begin
+.loop_end:
+
+  cmp r12, 0
+  je .skip_neg1
+  mov byte [rdi], '-'
+  inc rbx
+.skip_neg1:
+
+  mov rax, rbx
+  pop r12
+  pop r11
+  pop r10
+  pop rbx
+  ret
+
+global ether_value_to_str_3
+ether_value_to_str_3:
+  add rdi, rsi
+  cmp rdx, 0
+  je .skip_true
+  mov byte [rdi+0], 't'
+  mov byte [rdi+1], 'r'
+  mov byte [rdi+2], 'u'
+  mov byte [rdi+3], 'e'
+  mov rax, 4
+  ret
+.skip_true:
+  mov byte [rdi+0], 'f'
+  mov byte [rdi+1], 'a'
+  mov byte [rdi+2], 'l'
+  mov byte [rdi+3], 's'
+  mov byte [rdi+4], 'e'
+  mov rax, 5
+  ret
+
+global ether_value_to_str_4
+ether_value_to_str_4:
+  push rbx
+  push r10
+  push r11
+
+  add rdi, rsi
+  mov r11d, [rdx]
+  add rdx, 4
+
+  mov rbx, 0
+
+.loop_begin:
+  cmp ebx, r11d
+  jae .loop_end
+
+  mov r10b, [rdx]
+  mov [rdi+rbx], r10b
+  inc rbx
+  inc rdx
+
+  jmp .loop_begin
+.loop_end:
+
+  mov rax, rbx
+  pop r11
+  pop r10
+  pop rbx
+  ret
+
 section '.data'
 new_line: db 10

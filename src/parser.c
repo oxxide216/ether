@@ -1,4 +1,5 @@
 #include <wchar.h>
+#include <ctype.h>
 
 #define SHL_DEFS_LL_ALLOC(size) arena_alloc(arena, size)
 
@@ -69,6 +70,7 @@ static char *token_names[] = {
   "`(`",
   "`)`",
   "string literal",
+  "formatted string literal",
   "`...`",
   "int",
   "float",
@@ -213,13 +215,19 @@ static TokenStatus lex(Lexer *lexer, Token *token, Str file_path) {
       exit(1);
     }
 
-    if (id == TT_STR) {
+    if (id == TT_STR || id == TT_FSTR) {
+      if (id == TT_FSTR)
+        sb_push_char(&lexer->temp_sb, lexer->code.ptr[-2]);
       sb_push_char(&lexer->temp_sb, lexer->code.ptr[-1]);
 
+      char _char;
+      if (id == TT_STR)
+        _char = lexer->temp_sb.buffer[0];
+      else
+        _char = lexer->temp_sb.buffer[1];
+
       bool is_escaped = false;
-      while (lexer->code.len > 0 &&
-             (lexer->code.ptr[0] != lexer->temp_sb.buffer[0] ||
-              is_escaped)) {
+      while (lexer->code.len > 0 && (lexer->code.ptr[0] != _char || is_escaped)) {
         u32 next_len;
         wchar next = get_next_wchar(lexer->code, 0, &next_len);
 
@@ -555,8 +563,8 @@ static Expr *parser_parse_expr(Parser *parser) {
   Expr *expr = arena_alloc(parser->arena, sizeof(Expr));
 
   Token *first_token = parser_expect_token(parser, MASK(TT_OPAREN) | MASK(TT_STR) |
-                                                   MASK(TT_IDENT) | MASK(TT_INT) |
-                                                   MASK(TT_BOOL));
+                                                   MASK(TT_FSTR) | MASK(TT_IDENT) |
+                                                   MASK(TT_INT) |MASK(TT_BOOL));
 
   expr->loc.file_path = parser->file_path;
   expr->loc.row = first_token->row;
@@ -569,6 +577,129 @@ static Expr *parser_parse_expr(Parser *parser) {
     expr->kind = ExprKindStr;
     expr->as.str.str = STR(first_token->lexeme.ptr + 1,
                            first_token->lexeme.len - 2);
+  } break;
+
+  case TT_FSTR: {
+    Str str = {
+      first_token->lexeme.ptr + 2,
+      first_token->lexeme.len - 3,
+    };
+
+    FStrParts parts = {0};
+
+    u32 anchor = 0;
+    u32 index = 0;
+    u32 row_offset = 0;
+    u32 col_offset = 0;
+    while (index < str.len) {
+      bool current_is_obrace = str.ptr[index] == '{';
+      bool next_is_obrace = index + 1 < str.len && str.ptr[index + 1] == '{';
+      bool next_is_cbrace = index + 1 < str.len && str.ptr[index + 1] == '}';
+      if (current_is_obrace && !next_is_obrace && !next_is_cbrace) {
+        if (anchor < index) {
+          FStrPart part = {
+            false,
+            {
+              str.ptr + anchor,
+              index - anchor,
+            },
+          };
+          DA_APPEND(parts, part);
+        }
+
+        index += 1;
+        col_offset += 1;
+
+        anchor = index;
+        if (index < str.len &&
+            (isalpha(str.ptr[index]) ||
+             str.ptr[index] == '_' ||
+             str.ptr[index] == '-')) {
+          index += 1;
+          col_offset += 1;
+          while (index < str.len &&
+                 (isalnum(str.ptr[index]) ||
+                  str.ptr[index] == '_' ||
+                  str.ptr[index] == '-')) {
+            index += 1;
+            col_offset += 1;
+          }
+        } else {
+          goto fail;
+        }
+
+        if (index < str.len && str.ptr[index] == '}')
+          goto skip_fail;
+
+      fail:
+        if (index == str.len) {
+          ERROR(STR_FMT":%u:%u: Expected `}`, but got EOS",
+                STR_ARG(parser->file_path),
+                expr->loc.row + row_offset + 1,
+                expr->loc.col + col_offset + 1);
+        } else {
+          ERROR(STR_FMT":%u:%u: Expected `}`, but got `%c`",
+                STR_ARG(parser->file_path),
+                expr->loc.row + row_offset + 1,
+                expr->loc.col + col_offset + 1,
+                str.ptr[index]);
+          INFO("Only identifiers are supported in format strings\n");
+        }
+        exit(1);
+      skip_fail:
+        FStrPart part = {
+          true,
+          {
+            str.ptr + anchor,
+            index - anchor,
+          },
+        };
+        DA_APPEND(parts, part);
+
+        index += 1;
+        col_offset += 1;
+        anchor = index;
+      } else if (current_is_obrace && next_is_obrace) {
+        if (str.ptr[index] == '\n') {
+          row_offset += 1;
+          col_offset = 0;
+        } else {
+          col_offset += 2;
+        }
+        index += 2;
+      } else {
+        if (str.ptr[index] == '\n') {
+          row_offset += 1;
+          col_offset = 0;
+        } else {
+          col_offset += 1;
+        }
+        index += 1;
+      }
+    }
+
+    if (anchor < index) {
+      FStrPart part = {
+        false,
+        {
+          str.ptr + anchor,
+          index - anchor,
+        },
+      };
+      DA_APPEND(parts, part);
+    }
+
+    FStrParts new_parts;
+    new_parts.len = parts.len;
+    new_parts.cap = new_parts.len;
+    if (new_parts.len > 0) {
+      new_parts.items = arena_alloc(parser->arena, new_parts.cap * sizeof(FStrPart));
+      memcpy(new_parts.items, parts.items, new_parts.len * sizeof(FStrPart));
+      free(parts.items);
+    }
+
+    expr->kind = ExprKindFStr;
+    expr->as.fstr.parts = new_parts;
   } break;
 
   case TT_IDENT: {

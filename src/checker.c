@@ -129,9 +129,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
   case ExprKindBlock: {
     u32 prev_protos_len = checker->protos->len;
-    u32 prev_vars_len = checker->vars.len;
     Type *result = check_block(&expr->as.block, checker, value_expected);
-    checker->vars.len = prev_vars_len;
     checker->protos->len = prev_protos_len;
     return result;
   }
@@ -169,10 +167,11 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindFunc: {
-    u32 index = get_func_index(checker->funcs, expr->as.func.name);
-    if (index == (u32) -1)
-      return add_func(&expr->as.func, checker->funcs, checker->arena);
-    return checker->funcs->items[index].type;
+    DA_APPEND(*checker->protos, &expr->as.func);
+
+    Type *result = arena_alloc(checker->arena, sizeof(Type));
+    result->kind = TypeKindUnit;
+    return result;
   }
 
   case ExprKindFuncCall: {
@@ -207,19 +206,41 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     bool updated_func = false;
     Exprs *args = &expr->as.func_call.args;
     Types arg_types = {0};
+    u32 vars_start = checker->vars.len;
 
     for (u32 i = 0; i < args->len; ++i) {
+      Var var = { {}, NULL };
+      DA_APPEND(checker->vars, var);
+
       Type *arg_type = check_expr(args->items[i], checker, true);
+      if (!arg_type) {
+        if (arg_types.items)
+          free(arg_types.items);
+        return NULL;
+      }
+
       DA_APPEND(arg_types, arg_type);
     }
 
     if (func_type->built_in) {
       for (u32 i = 0; i < args->len; ++i) {
-        Var var = {
-          {},
-          arg_types.items[i],
-        };
-        DA_APPEND(checker->vars, var);
+        if (!type_eq(arg_types.items[i], func_type->built_in->arg_types + i)) {
+          Str a_str = get_type_str(arg_types.items[i]);
+          Str b_str = get_type_str(func_type->built_in->arg_types + i);
+          CERRORF(args->items[i], "Cannot pass value of type "STR_FMT" as an argument of type "STR_FMT"\n",
+                  STR_ARG(a_str), STR_ARG(b_str));
+          if (str_eq(func_type->built_in->name, STR_LIT("print")) ||
+              str_eq(func_type->built_in->name, STR_LIT("println"))) {
+            INFO("If you want to print this value, try using string interpolation instead: f\"{value}\"\n");
+          }
+          free_type_str(a_str, arg_types.items[i]);
+          free_type_str(b_str, func_type->built_in->arg_types + i);
+          if (arg_types.items)
+            free(arg_types.items);
+          return NULL;
+        }
+
+        checker->vars.items[vars_start + i].type = arg_types.items[i];
       }
 
       if (arg_types.items)
@@ -241,27 +262,17 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
         else
           func_type = checker->funcs->items[index].type;
         updated_func = true;
-        checker->vars.len -= i;
         break;
       }
 
-      Var var = {
-        {},
-        arg_types.items[i],
-      };
-      DA_APPEND(checker->vars, var);
+      checker->vars.items[vars_start + i].type = arg_types.items[i];
     }
 
     if (updated_func) {
       for (u32 i = 0; i < args->len; ++i) {
         type_narrow(args->items[i], func_type->arg_types.items[i],
                     arg_types.items[i], false);
-
-        Var var = {
-          {},
-          arg_types.items[i],
-        };
-        DA_APPEND(checker->vars, var);
+        checker->vars.items[vars_start + i].type = arg_types.items[i];
       }
     }
 
@@ -436,6 +447,43 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
     return first_arg_type;
   }
+
+  case ExprKindFStr: {
+    Type *type = arena_alloc(checker->arena, sizeof(Type));
+    type->kind = TypeKindInt;
+
+    Var var = { {}, type };
+
+    DA_APPEND(checker->vars, var);
+    DA_APPEND(checker->vars, var);
+
+    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
+      FStrPart *part = expr->as.fstr.parts.items + i;
+      if (!part->is_var)
+        continue;
+
+      u32 index = get_var_index(&checker->vars, checker->vars.len, part->str);
+      if (index == (u32) -1) {
+        CERRORF(expr, "Variable "STR_FMT" was not defined before usage\n",
+                STR_ARG(part->str));
+        return NULL;
+      }
+
+      if (checker->vars.items[index].type->kind == TypeKindFunc) {
+        Str type_str = get_type_str(checker->vars.items[index].type);
+        CERRORF(expr, "Cannot format variable "STR_FMT" of type "STR_FMT"\n",
+                STR_ARG(part->str), STR_ARG(type_str));
+        free_type_str(type_str, checker->vars.items[index].type);
+        return NULL;
+      }
+    }
+
+    DA_APPEND(checker->vars, var);
+
+    Type *result = arena_alloc(checker->arena, sizeof(Type));
+    result->kind = TypeKindStr;
+    return result;
+  }
   }
 
   return NULL;
@@ -511,7 +559,7 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
   if (func->expr->body.len > 0) {
     bool is_last_ret = func->expr->body.items[func->expr->body.len - 1]->kind == ExprKindRet;
 
-    if (!is_last_ret) {
+    if (!is_last_ret && !str_eq(func->expr->name, STR_LIT("main"))) {
       Var var = { {}, checker.return_type };
       DA_APPEND(checker.vars, var);
     }

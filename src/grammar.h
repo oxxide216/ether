@@ -22,13 +22,14 @@
 #define TT_OPAREN 18
 #define TT_CPAREN 19
 #define TT_STR 20
-#define TT_UNPACK 21
-#define TT_INT 22
-#define TT_FLOAT 23
-#define TT_BOOL 24
-#define TT_IDENT 25
+#define TT_FSTR 21
+#define TT_UNPACK 22
+#define TT_INT 23
+#define TT_FLOAT 24
+#define TT_BOOL 25
+#define TT_IDENT 26
 
-#define TTS_COLNT U26
+#define TTS_COLNT U27
 
 TransitionTable *get_transition_table(void);
 
@@ -144,6 +145,12 @@ TransitionCol table_col_str[] = {
   { 1, 39, 39, 0 },
 };
 
+TransitionCol table_col_fstr[] = {
+  { 1, 102, 102, 2 },
+  { 2, 34, 34, 0 },
+  { 2, 39, 39, 0 },
+};
+
 TransitionCol table_col_unpack[] = {
   { 1, 46, 46, 2 },
   { 2, 46, 46, 3 },
@@ -217,6 +224,7 @@ TransitionRow table_rows[] = {
   { table_col_oparen, sizeof(table_col_oparen) / sizeof(TransitionCol) },
   { table_col_cparen, sizeof(table_col_cparen) / sizeof(TransitionCol) },
   { table_col_str, sizeof(table_col_str) / sizeof(TransitionCol) },
+  { table_col_fstr, sizeof(table_col_fstr) / sizeof(TransitionCol) },
   { table_col_unpack, sizeof(table_col_unpack) / sizeof(TransitionCol) },
   { table_col_int, sizeof(table_col_int) / sizeof(TransitionCol) },
   { table_col_float, sizeof(table_col_float) / sizeof(TransitionCol) },
