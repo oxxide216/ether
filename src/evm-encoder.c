@@ -1008,7 +1008,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
       StringBuilder sb = {0};
       sb_push_str(&sb, STR_LIT("prep_"));
-      sb_push_type_hash(&sb, encoder->vars->items[dest_index].type);
+      sb_push_type_hash(&sb, encoder->vars->items[element_index].type);
 
       Str name;
       name.len = sb.len;
@@ -1017,6 +1017,22 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       free(sb.buffer);
 
       built_ins_to_gen_append(encoder, name, dest_index, arg_indices);
+
+      instr = (Instr) {
+        InstrKindStore,
+        {
+          .store = {
+            dest_index,
+            {
+              ValueKindUnsigned,
+              {
+                ._unsigned = 0,
+              },
+            },
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
 
       for (u32 i = elements->len; i > 0; --i) {
         segments.items = malloc(segments.cap * sizeof(AlignedSegment));

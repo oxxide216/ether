@@ -1,4 +1,4 @@
 (fun main ()
-  (let xs ['Hello' 'World'])
+  (let xs [[0 1] [2 3]])
   (println f'{xs}')
   0)
