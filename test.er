@@ -1,3 +1,4 @@
 (fun main ()
-  (let x 216)
-  (println f"Hello, {x}!"))
+  (let xs ['Hello' 'World'])
+  (println f'{xs}')
+  0)

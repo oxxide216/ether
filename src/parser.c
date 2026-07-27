@@ -564,7 +564,8 @@ static Expr *parser_parse_expr(Parser *parser) {
 
   Token *first_token = parser_expect_token(parser, MASK(TT_OPAREN) | MASK(TT_STR) |
                                                    MASK(TT_FSTR) | MASK(TT_IDENT) |
-                                                   MASK(TT_INT) |MASK(TT_BOOL));
+                                                   MASK(TT_INT) |MASK(TT_BOOL) |
+                                                   MASK(TT_OCURLY));
 
   expr->loc.file_path = parser->file_path;
   expr->loc.row = first_token->row;
@@ -715,6 +716,20 @@ static Expr *parser_parse_expr(Parser *parser) {
   case TT_BOOL: {
     expr->kind = ExprKindBool;
     expr->as._bool._bool = str_eq(first_token->lexeme, STR_LIT("true"));
+  } break;
+
+  case TT_OCURLY: {
+    expr->kind = ExprKindList;
+
+    Token *token = parser_peek_token(parser);
+    while (token && token->id != TT_CCURLY) {
+      Expr *temp_expr = parser_parse_expr(parser);
+      DA_ARENA_APPEND(expr->as.list.elements, temp_expr, parser->arena);
+
+      token = parser_peek_token(parser);
+    }
+
+    parser_expect_token(parser, MASK(TT_CCURLY));
   } break;
 
   default: {

@@ -27,7 +27,23 @@ println:
 
   ret
 
-global ether_get_value_len_as_str_2
+len_internal:
+  cmp rdi, 0
+  jne .skip_null
+  mov rax, rsi
+  ret
+.skip_null:
+
+  mov rdi, [rdi]
+  inc rsi
+  jmp len_internal
+
+global len
+len:
+  mov rsi, 0
+  jmp len_internal
+
+global ether_get_value_len_as_str_2 ; int
 ether_get_value_len_as_str_2:
   cmp rdi, 0
   jne .skip_zero
@@ -69,7 +85,7 @@ ether_get_value_len_as_str_2:
   pop rbx
   ret
 
-global ether_get_value_len_as_str_3
+global ether_get_value_len_as_str_3 ; bool
 ether_get_value_len_as_str_3:
   cmp rdi, 0
   je .skip_true
@@ -79,9 +95,15 @@ ether_get_value_len_as_str_3:
   mov rax, 5
   ret
 
-global ether_get_value_len_as_str_4
+global ether_get_value_len_as_str_4 ; str
 ether_get_value_len_as_str_4:
   mov eax, [rdi]
+  ret
+
+global ether_get_value_len_as_str_4_quoted ; str
+ether_get_value_len_as_str_4_quoted:
+  mov eax, [rdi]
+  add eax, 2
   ret
 
 global ether_alloc
@@ -89,7 +111,7 @@ ether_alloc:
   push rbx
   push r10
 
-  add rdi, 4
+  add rdi, 8
 
   mov r9, 0
   mov r8, -1
@@ -111,21 +133,21 @@ ether_alloc:
   jmp .loop_begin
 .loop_end:
 
-  add rax, 4
+  add rax, 8
 
   pop r10
   pop rbx
   ret
 
-ether_free_4:
-  mov esi, [rdi+4]
-  add esi, 6
+ether_free_4:; str
+  mov rsi, [rdi+8]
+  add rsi, 6
   mov rax, 11
   syscall
 
   ret
 
-global ether_rc_inc_4
+global ether_rc_inc_4 ; str
 ether_rc_inc_4:
   mov rsi, rdi
   mov edx, [rdi]
@@ -133,12 +155,12 @@ ether_rc_inc_4:
   add rsi, 5
   cmp byte [rsi], 1
   je .skip_static
-  inc dword [rdi-4]
+  inc qword [rdi-8]
 .skip_static:
 
   ret
 
-global ether_rc_dec_4
+global ether_rc_dec_4 ; str
 ether_rc_dec_4:
   mov rsi, rdi
   mov edx, [rdi]
@@ -146,14 +168,25 @@ ether_rc_dec_4:
   add rsi, 5
   cmp byte [rsi], 1
   je .skip_static
-  dec dword [rdi-4]
-  cmp dword[rdi-4], 0
+  dec qword [rdi-8]
+  cmp qword[rdi-8], 0
   jle ether_free_4
 .skip_static:
 
   ret
 
-global ether_value_to_str_2
+global ether_rc_inc_5 ; list
+ether_rc_inc_5:
+  cmp rdi, 0
+  je .skip_null
+  inc qword [rdi-8]
+.skip_null:
+
+  ret
+
+; ether_rc_dec_5 (for lists) is generated because it has to be generic
+
+global ether_value_to_str_2 ; int
 ether_value_to_str_2:
   cmp rdx, 0
   jne .skip_zero
@@ -221,7 +254,7 @@ ether_value_to_str_2:
   pop rbx
   ret
 
-global ether_value_to_str_3
+global ether_value_to_str_3 ; bool
 ether_value_to_str_3:
   add rdi, rsi
   cmp rdx, 0
@@ -241,7 +274,7 @@ ether_value_to_str_3:
   mov rax, 5
   ret
 
-global ether_value_to_str_4
+global ether_value_to_str_4 ; str
 ether_value_to_str_4:
   push rbx
   push r10
@@ -267,6 +300,24 @@ ether_value_to_str_4:
 
   mov rax, rbx
   pop r11
+  pop r10
+  pop rbx
+  ret
+
+global ether_value_to_str_4_quoted ; str
+ether_value_to_str_4_quoted:
+  push rbx
+  push r10
+
+  mov byte [rdi+rsi], 39
+  inc rsi
+  mov rbx, rdi
+  mov r10, rsi
+  call ether_value_to_str_4
+  add r10, rax
+  mov byte [rbx+r10], 39
+
+  add rax, 2
   pop r10
   pop rbx
   ret

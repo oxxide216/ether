@@ -15,6 +15,7 @@ typedef enum {
   TypeKindInt,
   TypeKindBool,
   TypeKindStr,
+  TypeKindList,
   TypeKindAny,
 } TypeKind;
 
@@ -30,6 +31,7 @@ struct Type {
       u32      func_index;
       BuiltIn *built_in;
     };
+    Type *element_type;
   };
 };
 
@@ -50,6 +52,7 @@ typedef enum {
   ExprKindIf,
   ExprKindBinOp,
   ExprKindFStr,
+  ExprKindList,
 } ExprKind;
 
 typedef struct  {
@@ -130,6 +133,10 @@ typedef struct {
   FStrParts parts;
 } ExprFStr;
 
+typedef struct {
+  Exprs elements;
+} ExprList;
+
 typedef union {
   ExprStr      str;
   ExprInt      _int;
@@ -144,6 +151,7 @@ typedef union {
   ExprIf       _if;
   ExprBinOp    bin_op;
   ExprFStr     fstr;
+  ExprList     list;
 } ExprAs;
 
 typedef struct {

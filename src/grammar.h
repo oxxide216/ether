@@ -21,15 +21,17 @@
 #define TT_PERC 17
 #define TT_OPAREN 18
 #define TT_CPAREN 19
-#define TT_STR 20
-#define TT_FSTR 21
-#define TT_UNPACK 22
-#define TT_INT 23
-#define TT_FLOAT 24
-#define TT_BOOL 25
-#define TT_IDENT 26
+#define TT_OCURLY 20
+#define TT_CCURLY 21
+#define TT_STR 22
+#define TT_FSTR 23
+#define TT_UNPACK 24
+#define TT_INT 25
+#define TT_FLOAT 26
+#define TT_BOOL 27
+#define TT_IDENT 28
 
-#define TTS_COLNT U27
+#define TTS_COLNT U29
 
 TransitionTable *get_transition_table(void);
 
@@ -140,6 +142,14 @@ TransitionCol table_col_cparen[] = {
   { 1, 41, 41, 0 },
 };
 
+TransitionCol table_col_ocurly[] = {
+  { 1, 91, 91, 0 },
+};
+
+TransitionCol table_col_ccurly[] = {
+  { 1, 93, 93, 0 },
+};
+
 TransitionCol table_col_str[] = {
   { 1, 34, 34, 0 },
   { 1, 39, 39, 0 },
@@ -223,6 +233,8 @@ TransitionRow table_rows[] = {
   { table_col_perc, sizeof(table_col_perc) / sizeof(TransitionCol) },
   { table_col_oparen, sizeof(table_col_oparen) / sizeof(TransitionCol) },
   { table_col_cparen, sizeof(table_col_cparen) / sizeof(TransitionCol) },
+  { table_col_ocurly, sizeof(table_col_ocurly) / sizeof(TransitionCol) },
+  { table_col_ccurly, sizeof(table_col_ccurly) / sizeof(TransitionCol) },
   { table_col_str, sizeof(table_col_str) / sizeof(TransitionCol) },
   { table_col_fstr, sizeof(table_col_fstr) / sizeof(TransitionCol) },
   { table_col_unpack, sizeof(table_col_unpack) / sizeof(TransitionCol) },

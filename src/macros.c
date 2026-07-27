@@ -137,6 +137,10 @@ static void clone_expr(Expr **expr, Strs *arg_names, Arena *arena) {
            (*expr)->as.fstr.parts.items,
            new_expr->as.fstr.parts.len * sizeof(FStrPart));
   } break;
+
+  case ExprKindList: {
+    clone_block(&new_expr->as.list.elements, arg_names, arena);
+  } break;
   }
 }
 
@@ -257,6 +261,10 @@ static void rename_args_expr(Expr *expr, Strs *prev_arg_names,
         }
       }
     }
+  } break;
+
+  case ExprKindList: {
+    rename_args_block(&expr->as.list.elements, prev_arg_names, new_arg_names, arena);
   } break;
   }
 }
@@ -508,6 +516,10 @@ void expand_macros(Expr *expr, Macros *macros,
   } break;
 
   case ExprKindFStr: break;
+
+  case ExprKindList: {
+    INLINE_THEN_EXPAND_BLOCK(expr->as.list.elements);
+  } break;
   }
 
   if (arg_names && args && !is_inlined) {

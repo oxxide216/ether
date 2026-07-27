@@ -65,7 +65,18 @@ Str get_type_str(Type *type) {
   case TypeKindInt:  return STR_LIT("int");
   case TypeKindBool: return STR_LIT("bool");
   case TypeKindStr:  return STR_LIT("str");
-  case TypeKindAny:  return STR_LIT("");
+
+  case TypeKindList: {
+    StringBuilder sb = {0};
+    sb_push_char(&sb, '[');
+    Str type_str = get_type_str(type->element_type);
+    sb_push_str(&sb, type_str);
+    free_type_str(type_str, type->element_type);
+    sb_push_char(&sb, ']');
+    return sb_to_str(sb);
+  }
+
+  case TypeKindAny: return STR_LIT("");
   }
 
   return (Str) {0};
@@ -236,8 +247,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
           }
           free_type_str(a_str, arg_types.items[i]);
           free_type_str(b_str, func_type->built_in->arg_types + i);
-          if (arg_types.items)
-            free(arg_types.items);
+          free(arg_types.items);
           return NULL;
         }
 
@@ -288,16 +298,19 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindLet: {
+    u32 var_index = checker->vars.len;
+    Var var = {
+      expr->as.let.name,
+      NULL,
+      false,
+    };
+    DA_APPEND(checker->vars, var);
+
     Type *type = check_expr(expr->as.let.value, checker, true);
     if (!type)
       return NULL;
 
-    Var var = {
-      expr->as.let.name,
-      type,
-      false,
-    };
-    DA_APPEND(checker->vars, var);
+    checker->vars.items[var_index].type = type;
 
     return type;
   }
@@ -309,7 +322,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
     u32 var_index = get_var_index(&checker->vars, checker->vars.len, expr->as.set.name);
     if (var_index == (u32) -1) {
-      CERRORF(expr, "Symbol "STR_FMT" was not defined before usage\n",
+      CERRORF(expr, "Variable "STR_FMT" was not defined before usage\n",
               STR_ARG(expr->as.set.name));
       return NULL;
     }
@@ -495,6 +508,50 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     result->kind = TypeKindStr;
     return result;
   }
+
+  case ExprKindList: {
+    Type *type = arena_alloc(checker->arena, sizeof(Type));
+    type->kind = TypeKindInt;
+
+    Type *result = arena_alloc(checker->arena, sizeof(Type));
+    result->kind = TypeKindList;
+
+    if (expr->as.list.elements.len == 0) {
+      result->element_type = arena_alloc(checker->arena, sizeof(Type));
+      result->element_type->kind = TypeKindAny;
+    } else {
+      Type *element_type = check_expr(expr->as.list.elements.items[0], checker, true);
+      result->element_type = element_type;
+      if (result->element_type->kind == TypeKindUnit) {
+        CERROR(expr->as.list.elements.items[0], "List cannot hold type unit\n");
+        return NULL;
+      }
+    }
+
+    if (value_expected) {
+      Var var0 = { {}, result->element_type, false };
+      DA_APPEND(checker->vars, var0);
+
+      Var var1 = { {}, type, false };
+      DA_APPEND(checker->vars, var1);
+    }
+
+    for (u32 i = 1; i < expr->as.list.elements.len; ++i) {
+      Expr *element = expr->as.list.elements.items[i];
+      Type *element_type = check_expr(element, checker, true);
+      if (!type_eq(element_type, result->element_type)) {
+        Str a_str = get_type_str(element_type);
+        Str b_str = get_type_str(result->element_type);
+        CERRORF(element, "Cannot add list element of type "STR_FMT" to a list with element type "STR_FMT"\n",
+                STR_ARG(a_str), STR_ARG(b_str));
+        free_type_str(a_str, element_type);
+        free_type_str(b_str, result->element_type);
+        return NULL;
+      }
+    }
+
+    return result;
+  }
   }
 
   return NULL;
@@ -571,7 +628,7 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
   if (func->expr->body.len > 0) {
     bool is_last_ret = func->expr->body.items[func->expr->body.len - 1]->kind == ExprKindRet;
 
-    if (!is_last_ret && !str_eq(func->expr->name, STR_LIT("main"))) {
+    if (!is_last_ret) {
       Var var = { {}, checker.return_type, false };
       DA_APPEND(checker.vars, var);
     }
@@ -631,28 +688,11 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
 
   Type *main_return_type = funcs->items[0].type->return_type;
   if (main_return_type->kind != TypeKindInt) {
-    if (main_return_type->kind == TypeKindUnit) {
-      main_return_type->kind = TypeKindInt;
-
-      Var var = { {}, main_return_type, false };
-      DA_APPEND(funcs->items[0].vars, var);
-
-      Expr *expr0 = arena_alloc(arena, sizeof(Expr));
-      expr0->kind = ExprKindInt;
-      expr0->as._int._int = 0;
-
-      Expr *expr1 = arena_alloc(arena, sizeof(Expr));
-      expr1->kind = ExprKindRet;
-      expr1->as.ret.value = expr0;
-
-      DA_ARENA_APPEND(main_expr->body, expr1, arena);
-    } else {
-      Str main_return_type_str = get_type_str(main_return_type);
-      ERROR("Unexpected `main` function return type: "STR_FMT", expected int\n",
-            STR_ARG(main_return_type_str));
-      free_type_str(main_return_type_str, main_return_type);
-      goto fail;
-    }
+    Str main_return_type_str = get_type_str(main_return_type);
+    ERROR("Unexpected `main` function return type: "STR_FMT", expected int\n",
+          STR_ARG(main_return_type_str));
+    free_type_str(main_return_type_str, main_return_type);
+    goto fail;
   }
 
   if (protos.items)
