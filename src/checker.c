@@ -76,7 +76,7 @@ Str get_type_str(Type *type) {
     return sb_to_str(sb);
   }
 
-  case TypeKindAny: return STR_LIT("");
+  case TypeKindAny: return STR_LIT("any");
   }
 
   return (Str) {0};
