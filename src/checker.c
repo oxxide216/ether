@@ -83,8 +83,27 @@ Str get_type_str(Type *type) {
 }
 
 bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
-  if (a->kind != TypeKindAny) {
-    if (!type_eq(a, b)) {
+  if (!type_eq(a, b)) {
+    if (log_error) {
+      Str a_str = get_type_str(a);
+      Str b_str = get_type_str(b);
+      CERRORF(expr, "Trying to assign a value of type "STR_FMT" to a symbol of type "STR_FMT"\n",
+              STR_ARG(b_str), STR_ARG(a_str));
+      free_type_str(a_str, a);
+      free_type_str(b_str, b);
+    }
+    return false;
+  }
+
+  if (a->kind == TypeKindAny) {
+    *a = *b;
+  } else if (b->kind == TypeKindAny) {
+    *b = *a;
+  } else if (a->kind == TypeKindFunc) {
+    if (!type_narrow(expr, a->return_type, b->return_type, log_error))
+      return false;
+
+    if (a->arg_types.len != b->arg_types.len) {
       if (log_error) {
         Str a_str = get_type_str(a);
         Str b_str = get_type_str(b);
@@ -96,11 +115,12 @@ bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
       return false;
     }
 
-    return true;
+    for (u32 i = 0; i < a->arg_types.len; ++i)
+      if (!type_narrow(expr, a->arg_types.items[i], b->arg_types.items[i], log_error))
+        return false;
+  } else if (a->kind == TypeKindList) {
+    return type_narrow(expr, a->element_type, b->element_type, log_error);
   }
-
-  if (a->kind == TypeKindAny)
-    *a = *b;
 
   return true;
 }
@@ -162,12 +182,8 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     if (built_in) {
       Type *result = arena_alloc(checker->arena, sizeof(Type));
       result->kind = TypeKindFunc;
-      result->return_type = &built_in->return_type;
       result->arg_types.len = built_in->args_len;
       result->arg_types.cap = result->arg_types.len;
-      result->arg_types.items = arena_alloc(checker->arena, result->arg_types.cap * sizeof(Type *));
-      for (u32 i = 0; i < result->arg_types.len; ++i)
-        result->arg_types.items[i] = built_in->arg_types + i;
       result->built_in = built_in;
       return result;
     }
@@ -235,10 +251,16 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     }
 
     if (func_type->built_in) {
+      func_type->return_type =
+        func_type->built_in->get_return_type(func_type->built_in, &arg_types, checker->arena);
+      func_type->arg_types.items =
+        func_type->built_in->get_arg_types(func_type->built_in, &arg_types, checker->arena);
+
       for (u32 i = 0; i < args->len; ++i) {
-        if (!type_eq(arg_types.items[i], func_type->built_in->arg_types + i)) {
+        if (!type_narrow(args->items[i], arg_types.items[i],
+                         func_type->arg_types.items[i], false)) {
           Str a_str = get_type_str(arg_types.items[i]);
-          Str b_str = get_type_str(func_type->built_in->arg_types + i);
+          Str b_str = get_type_str(func_type->arg_types.items[i]);
           CERRORF(args->items[i], "Cannot pass value of type "STR_FMT" as an argument of type "STR_FMT"\n",
                   STR_ARG(a_str), STR_ARG(b_str));
           if (str_eq(func_type->built_in->name, STR_LIT("print")) ||
@@ -246,7 +268,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
             INFO("If you want to print this value, try using string interpolation instead: f\"{value}\"\n");
           }
           free_type_str(a_str, arg_types.items[i]);
-          free_type_str(b_str, func_type->built_in->arg_types + i);
+          free_type_str(b_str, func_type->arg_types.items[i]);
           free(arg_types.items);
           return NULL;
         }
@@ -300,7 +322,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   case ExprKindLet: {
     u32 var_index = checker->vars.len;
     Var var = {
-      expr->as.let.name,
+      {},
       NULL,
       false,
     };
@@ -310,6 +332,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     if (!type)
       return NULL;
 
+    checker->vars.items[var_index].name = expr->as.let.name;
     checker->vars.items[var_index].type = type;
 
     return type;
@@ -528,7 +551,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       }
     }
 
-    if (value_expected) {
+    if (value_expected && expr->as.list.elements.len > 0) {
       Var var0 = { {}, result->element_type, false };
       DA_APPEND(checker->vars, var0);
 
@@ -674,6 +697,9 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
   ExprFunc *main_expr = get_func_expr(&protos, STR_LIT("main"));
   if (!main_expr) {
     ERROR("`main` function was not defined\n");
+    INFO("Try defining it like this:\n");
+    printf("  (fun main()\n");
+    printf("    0)\n");
     goto fail;
   }
 

@@ -255,7 +255,7 @@ static void try_gen_rc_dec(Encoder *encoder, u32 index, u32 insert_point) {
   if (type_is_rc(encoder->vars->items[index].type)) {
     StringBuilder sb = {0};
     sb_push_str(&sb, STR_LIT("ether_rc_dec_"));
-    sb_push_u32(&sb, encoder->vars->items[index].type->kind);
+    sb_push_type_hash(&sb, encoder->vars->items[index].type);
 
     Indices arg_indices;
     arg_indices.len = 1;
@@ -430,6 +430,23 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
         name.ptr = arena_alloc(encoder->arena, name.len);
         memcpy(name.ptr, temp_name.ptr, name.len);
         free(temp_name.ptr);
+      }
+
+      if (str_eq(name, STR_LIT("prep")) || str_eq(name, STR_LIT("app"))) {
+        StringBuilder sb = {0};
+        sb_push_str(&sb, name);
+        sb_push_char(&sb, '_');
+        if (str_eq(name, STR_LIT("prep")))
+          sb_push_type_hash(&sb, encoder->vars->items[arg_indices.items[1]].type);
+        else
+          sb_push_type_hash(&sb, encoder->vars->items[arg_indices.items[0]].type);
+
+        name.len = sb.len;
+        name.ptr = arena_alloc(encoder->arena, name.len);
+        memcpy(name.ptr, sb.buffer, name.len);
+        free(sb.buffer);
+
+        built_ins_to_gen_append(encoder, name, dest_index, arg_indices);
       }
 
       if (dest_index == (u32) -1) {
@@ -1259,6 +1276,8 @@ static void encode_instr(FILE *stream, Instr *instr) {
 
 static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
   if (begins_with(built_in->name, STR_LIT("prep"))) {
+    try_gen_rc_inc(encoder, 1);
+
     Var dest_var = {
       {},
       built_in->_return->type,
@@ -1316,40 +1335,39 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
 
-    Segments segments0 = {0};
-    segments0.len = 2;
-    segments0.cap = segments0.len;
-    segments0.items = malloc(segments0.cap * sizeof(AlignedSegment));
-    segments0.items[0].offset = 0;
-    segments0.items[0].size = 8;
-    segments0.items[1].offset = 8;
-    segments0.items[1].size = element_size;
+    Segments segments = {0};
+    segments.len = 2;
+    segments.cap = segments.len;
+    segments.items = malloc(segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+    segments.items[1].offset = 8;
+    segments.items[1].size = element_size;
 
     instr = (Instr) {
       InstrKindCopyToRefFixed,
       {
         .copy_to_ref_fixed = {
           dest_index,
-          segments0,
+          segments,
           0,
         },
       },
     };
     DA_APPEND(encoder->instrs, instr);
 
-    Segments segments1 = {0};
-    segments1.len = 1;
-    segments1.cap = segments1.len;
-    segments1.items = malloc(segments1.cap * sizeof(AlignedSegment));
-    segments1.items[0].offset = 0;
-    segments1.items[0].size = 8;
+    segments.len = 1;
+    segments.cap = segments.len;
+    segments.items = malloc(segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
 
     instr = (Instr) {
       InstrKindCopyToRefFixed,
       {
         .copy_to_ref_fixed = {
           dest_index,
-          segments1,
+          segments,
           1,
         },
       },
@@ -1365,7 +1383,308 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       },
     };
     DA_APPEND(encoder->instrs, instr);
-  } else if (str_eq(built_in->name, STR_LIT("ether_rc_dec_5"))) {
+  } else if (begins_with(built_in->name, STR_LIT("app"))) {
+    Var new_var = {
+      {},
+      built_in->_return->type,
+      false,
+    };
+    DA_APPEND(*encoder->vars, new_var);
+    u32 new_index = define_var(encoder);
+
+    Var temp_var = {
+      {},
+      built_in->_return->type,
+      false,
+    };
+    DA_APPEND(*encoder->vars, temp_var);
+    u32 temp_index = define_var(encoder);
+
+    Instr instr = {
+      InstrKindCopy,
+      {
+        .copy = {
+          temp_index,
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    Var cond_var = {
+      {},
+      arena_alloc(encoder->arena, sizeof(Type)),
+      false,
+    };
+    cond_var.type->kind = TypeKindInt;
+    DA_APPEND(*encoder->vars, cond_var);
+    u32 cond_index = define_var(encoder);
+
+    Var zero_var = {
+      {},
+      arena_alloc(encoder->arena, sizeof(Type)),
+      false,
+    };
+    zero_var.type->kind = TypeKindInt;
+    DA_APPEND(*encoder->vars, zero_var);
+    u32 zero_index = define_var(encoder);
+
+    instr = (Instr) {
+      InstrKindStore,
+      {
+        .store = {
+          zero_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = 0,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 cond_instr_index = encoder->instrs.len;
+
+    instr = (Instr) {
+      InstrKindBinOp,
+      {
+        .bin_op = {
+          cond_index,
+          temp_index,
+          zero_index,
+          BinOpKindNeInt,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 jump0_instr_index = encoder->instrs.len;
+    instr = (Instr) {
+      InstrKindJumpIfNot,
+      {
+        .jump_if_not = {
+          cond_index,
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    Segments segments = {0};
+    segments.len = 1;
+    segments.cap = segments.len;
+    segments.items = malloc(segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+
+    instr = (Instr) {
+      InstrKindCopyFromRefFixed,
+      {
+        .copy_from_ref_fixed = {
+          new_index,
+          temp_index,
+          segments,
+          ValueKindUnsigned,
+          8,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindBinOp,
+      {
+        .bin_op = {
+          cond_index,
+          new_index,
+          zero_index,
+          BinOpKindNeInt,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 jump1_instr_index = encoder->instrs.len;
+    instr = (Instr) {
+      InstrKindJumpIfNot,
+      {
+        .jump_if_not = {
+          cond_index,
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    segments.len = 1;
+    segments.cap = segments.len;
+    segments.items = malloc(segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+
+    instr = (Instr) {
+      InstrKindCopyFromRefFixed,
+      {
+        .copy_from_ref_fixed = {
+          temp_index,
+          temp_index,
+          segments,
+          ValueKindUnsigned,
+          8,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindJump,
+      {
+        .jump = {
+          cond_instr_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    encoder->instrs.items[jump0_instr_index].as.jump_if_not.target = encoder->instrs.len;
+    encoder->instrs.items[jump1_instr_index].as.jump_if_not.target = encoder->instrs.len;
+
+    Var size_var = {
+      {},
+      arena_alloc(encoder->arena, sizeof(Type)),
+      false,
+    };
+    size_var.type->kind = TypeKindInt;
+    DA_APPEND(*encoder->vars, size_var);
+    u32 size_index = define_var(encoder);
+
+    u32 element_size = get_type_size(encoder->vars->items[1].type);
+    instr = (Instr) {
+      InstrKindStore,
+      {
+        .store = {
+          size_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = 8 + element_size,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 size = get_type_size(built_in->_return->type);
+    ValueKind kind = get_type_value_kind(built_in->_return->type);
+
+    Indices arg_indices;
+    arg_indices.len = 1;
+    arg_indices.cap = arg_indices.len;
+    arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+    arg_indices.items[0] = size_index;
+
+    instr = (Instr) {
+      InstrKindCallAssign,
+      {
+        .call_assign = {
+          new_index,
+          size,
+          kind,
+          STR_LIT("ether_alloc"),
+          arg_indices,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    segments.len = 2;
+    segments.cap = segments.len;
+    segments.items = malloc(segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+    segments.items[1].offset = 8;
+    segments.items[1].size = element_size;
+
+    instr = (Instr) {
+      InstrKindCopyToRefFixed,
+      {
+        .copy_to_ref_fixed = {
+          new_index,
+          segments,
+          1,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindBinOp,
+      {
+        .bin_op = {
+          cond_index,
+          temp_index,
+          zero_index,
+          BinOpKindNeInt,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 jump2_instr_index = encoder->instrs.len;
+    instr = (Instr) {
+      InstrKindJumpIfNot,
+      {
+        .jump_if_not = {
+          cond_index,
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    segments.len = 1;
+    segments.cap = segments.len;
+    segments.items = malloc(segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+
+    instr = (Instr) {
+      InstrKindCopyToRefFixed,
+      {
+        .copy_to_ref_fixed = {
+          temp_index,
+          segments,
+          new_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindRetVal,
+      {
+        .ret_val = {
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    encoder->instrs.items[jump2_instr_index].as.jump_if_not.target = encoder->instrs.len;
+
+    instr = (Instr) {
+      InstrKindRetVal,
+      {
+        .ret_val = {
+          new_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+  } else if (begins_with(built_in->name, STR_LIT("ether_rc_dec_5"))) {
     Var cond_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
@@ -2205,8 +2524,7 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     DA_APPEND(instrss, encoder.instrs);
   }
 
-  u32 len = encoder.built_ins_to_gen.len + funcs->len;
-  fwrite(&len, sizeof(len), 1, stream);
+  fwrite(&instrss.len, sizeof(instrss.len), 1, stream);
 
   for (u32 i = 0; i < encoder.built_ins_to_gen.len; ++i) {
     BuiltInToGen *built_in = encoder.built_ins_to_gen.items + i;
