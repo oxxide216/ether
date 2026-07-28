@@ -1081,7 +1081,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
 static void encode_block(Encoder *encoder, Exprs *block,
                          u32 dest_index, bool last_is_return) {
-  for (u32 i = 0; i + (last_is_return | (dest_index != (u32) -1)) < block->len; ++i)
+  for (u32 i = 0; i + 1 < block->len; ++i)
     encode_expr(encoder, block->items[i], (u32) -1);
 
   if (block->len > 0) {
@@ -2489,13 +2489,31 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     encoder.vars = &func->vars;
     encoder.vars_defined = func->expr->args.len;
 
-    encode_block(&encoder, &funcs->items[i].expr->body, (u32) -1, true);
+    bool is_result_zero_sized = get_type_size(func->type->return_type) == 0;
+
+    encode_block(&encoder, &funcs->items[i].expr->body, (u32) -1, !is_result_zero_sized);
 
     u32 insert_point = encoder.instrs.len;
-    if (encoder.instrs.len > 0 &&
-        (encoder.instrs.items[encoder.instrs.len - 1].kind == InstrKindRet ||
-         encoder.instrs.items[encoder.instrs.len - 1].kind == InstrKindRetVal))
-      insert_point = encoder.instrs.len - 1;
+    if (encoder.instrs.len > 0) {
+      Instr *last_instr = encoder.instrs.items + encoder.instrs.len - 1;
+      if (last_instr->kind == InstrKindRet || last_instr->kind == InstrKindRetVal) {
+        insert_point = encoder.instrs.len - 1;
+        --last_instr;
+      }
+      // For TCO
+      if (encoder.instrs.len > 1) {
+        Str func_name = func->expr->name;
+        if (!str_eq(func->expr->name, STR_LIT("main")))
+          func_name = mangle_func_name(func);
+        if ((last_instr->kind == InstrKindCall &&
+             str_eq(last_instr->as.call.name, func_name)) ||
+            (last_instr->kind == InstrKindCallAssign &&
+             str_eq(last_instr->as.call_assign.name, func_name)))
+          --insert_point;
+        if (!str_eq(func->expr->name, STR_LIT("main")))
+          free(func_name.ptr);
+      }
+    }
 
     for (u32 j = encoder.vars->len; j > 0; --j) {
       if (encoder.vars->items[j - 1].name.len > 0 ||

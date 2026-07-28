@@ -598,6 +598,7 @@ Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena) {
     arena_alloc(arena, sizeof(Type)),
     expr->args,
     {},
+    false,
   };
   *new_func.type = (Type) {
     TypeKindFunc,
@@ -624,6 +625,10 @@ Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena) {
 
 bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
   Func *func = funcs->items + index;
+
+  if (func->is_checked)
+    return true;
+  func->is_checked = true;
 
   FuncChecker checker = {0};
   checker.return_type = func->type->return_type;
