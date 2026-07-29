@@ -291,18 +291,15 @@ static void append_macro_arg(u32 index, Strs *arg_names,
   Expr *arg = args->items[index];
 
   if (unpack && index + 1 == arg_names->len) {
-    ERROR("Unpacking is not implemented yet\n");
-    INFO("TODO: Add it back when lists will be added\n");
-    exit(1);
-    // Exprs *variadic_args = &args->items[args->len - 1]->as.list.content;
-    // for (u32 i = 0; i < variadic_args->len; ++i) {
-    //   Expr *new_arg = variadic_args->items[i];
+    Exprs *variadic_args = &args->items[args->len - 1]->as.list.elements;
+    for (u32 i = 0; i < variadic_args->len; ++i) {
+      Expr *new_arg = variadic_args->items[i];
 
-    //   if (!try_inline_macro_arg(&new_arg, arg_names, args, dest, unpack, arena)) {
-    //     clone_expr(&new_arg, arg_names, arena);
-    //     block_append(dest, new_arg, arena);
-    //   }
-    // }
+      if (!try_inline_macro_arg(&new_arg, arg_names, args, dest, unpack, arena)) {
+        clone_expr(&new_arg, arg_names, arena);
+        block_append(dest, new_arg, arena);
+      }
+    }
   } else {
     clone_expr(&arg, arg_names, arena);
     block_append(dest, arg, arena);
@@ -420,28 +417,25 @@ void expand_macros(Expr *expr, Macros *macros,
         };
 
         if (macro->has_unpack) {
-          ERROR("Unpacking is not implemented yet\n");
-          INFO("TODO: Add it back when lists will be added\n");
-          exit(1);
-          // --new_args.len;
+          --new_args.len;
 
-          // Exprs variadic;
-          // variadic.len = expr->as.func_call.args.len - new_args.len;
-          // variadic.items = arena_alloc(arena, variadic.len * sizeof(Expr *));
+          Exprs variadic;
+          variadic.len = expr->as.func_call.args.len - new_args.len;
+          variadic.items = arena_alloc(arena, variadic.len * sizeof(Expr *));
 
-          // for (u32 i = 0; i < variadic.len; ++i)
-          //   variadic.items[i] = expr->as.func_call.args.items[new_args.len + i];
+          for (u32 i = 0; i < variadic.len; ++i)
+            variadic.items[i] = expr->as.func_call.args.items[new_args.len + i];
 
-          // Expr *variadic_args = arena_alloc(arena, sizeof(Expr));
-          // variadic_args->kind = ExprKindList;
-          // variadic_args->as.list.content.items = variadic.items;
-          // variadic_args->as.list.content.len = variadic.len;
+          Expr *variadic_args = arena_alloc(arena, sizeof(Expr));
+          variadic_args->kind = ExprKindList;
+          variadic_args->as.list.elements.items = variadic.items;
+          variadic_args->as.list.elements.len = variadic.len;
 
-          // Expr **new_items = arena_alloc(arena, (new_args.len + 1) * sizeof(Expr *));
-          // memcpy(new_items, new_args.items, new_args.len * sizeof(Expr *));
-          // new_args.items = new_items;
+          Expr **new_items = arena_alloc(arena, (new_args.len + 1) * sizeof(Expr *));
+          memcpy(new_items, new_args.items, new_args.len * sizeof(Expr *));
+          new_args.items = new_items;
 
-          // new_args.items[new_args.len++] = variadic_args;
+          new_args.items[new_args.len++] = variadic_args;
         }
 
         Strs new_arg_names = {0};
