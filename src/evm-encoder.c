@@ -211,6 +211,53 @@ static void built_ins_to_gen_append_rec(Encoder *encoder, Str name,
     free(sb.buffer);
 
     built_ins_to_gen_append_rec(encoder, new_name, return_index, new_arg_indices);
+  } else if (begins_with(name, STR_LIT("ether_rc_dec_5"))) {
+    StringBuilder sb = {0};
+    sb_push_str(&sb, STR_LIT("ether_free_"));
+    sb_push_type_hash(&sb, encoder->vars->items[arg_indices.items[0]].type);
+
+    Indices new_arg_indices;
+    new_arg_indices.len = 1;
+    new_arg_indices.cap = new_arg_indices.len;
+    new_arg_indices.items = arena_alloc(encoder->arena, new_arg_indices.cap * sizeof(u32));
+    new_arg_indices.items[0] = arg_indices.items[0];
+
+    Str new_name;
+    new_name.len = sb.len;
+    new_name.ptr = arena_alloc(encoder->arena, new_name.len);
+    memcpy(new_name.ptr, sb.buffer, new_name.len);
+    free(sb.buffer);
+
+    built_ins_to_gen_append_rec(encoder, new_name, return_index, new_arg_indices);
+  } else if (begins_with(name, STR_LIT("ether_free_5"))) {
+    Type *element_type = encoder->vars->items[arg_indices.items[0]].type->element_type;
+    if (element_type->kind != TypeKindList)
+      return;
+
+    Var var = {
+      {},
+      arena_alloc(encoder->arena, sizeof(Type)),
+    };
+    *var.type = *element_type;
+    DA_APPEND(*encoder->vars, var);
+
+    StringBuilder sb = {0};
+    sb_push_str(&sb, STR_LIT("ether_free_"));
+    sb_push_type_hash(&sb, var.type);
+
+    Indices new_arg_indices;
+    new_arg_indices.len = 1;
+    new_arg_indices.cap = new_arg_indices.len;
+    new_arg_indices.items = arena_alloc(encoder->arena, new_arg_indices.cap * sizeof(u32));
+    new_arg_indices.items[0] = encoder->vars->len - 1;
+
+    Str new_name;
+    new_name.len = sb.len;
+    new_name.ptr = arena_alloc(encoder->arena, new_name.len);
+    memcpy(new_name.ptr, sb.buffer, new_name.len);
+    free(sb.buffer);
+
+    built_ins_to_gen_append_rec(encoder, new_name, return_index, new_arg_indices);
   }
 }
 
@@ -282,7 +329,7 @@ static void try_gen_rc_dec(Encoder *encoder, u32 index, u32 insert_point) {
     free(sb.buffer);
 
     if (encoder->vars->items[index].type->kind == TypeKindList)
-      built_ins_to_gen_append(encoder, name, (u32) -1, arg_indices);
+      built_ins_to_gen_append_rec(encoder, name, (u32) -1, arg_indices);
 
     Instr instr = {
       InstrKindCall,
@@ -424,16 +471,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       encode_expr(encoder, expr->as.func_call.func, index);
     }
 
-    for (u32 i = 0; i < expr->as.func_call.args.len; ++i) {
-      u32 arg_index = define_var(encoder);
-      encode_expr(encoder, expr->as.func_call.args.items[i], arg_index);
-      try_gen_rc_inc(encoder, arg_index);
-      arg_indices.items[i] = arg_index;
-    }
-
-    Instr instr;
+    Str name;
+    bool is_built_in_to_gen = false;
     if (opt) {
-      Str name;
       if (expr->as.func_call.built_in) {
         name = expr->as.func_call.built_in->name;
       } else {
@@ -445,7 +485,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
         free(temp_name.ptr);
       }
 
-      if (str_eq(name, STR_LIT("prep")) || str_eq(name, STR_LIT("app"))) {
+      is_built_in_to_gen = str_eq(name, STR_LIT("prep")) ||
+                           str_eq(name, STR_LIT("app"));
+      if (is_built_in_to_gen) {
         StringBuilder sb = {0};
         sb_push_str(&sb, name);
         sb_push_char(&sb, '_');
@@ -461,7 +503,18 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
         built_ins_to_gen_append(encoder, name, dest_index, arg_indices);
       }
+    }
 
+    for (u32 i = 0; i < expr->as.func_call.args.len; ++i) {
+      u32 arg_index = define_var(encoder);
+      encode_expr(encoder, expr->as.func_call.args.items[i], arg_index);
+      if (!is_built_in_to_gen)
+        try_gen_rc_inc(encoder, arg_index);
+      arg_indices.items[i] = arg_index;
+    }
+
+    Instr instr;
+    if (opt) {
       if (dest_index == (u32) -1) {
         instr = (Instr) {
           InstrKindCall,
@@ -522,8 +575,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     }
     DA_APPEND(encoder->instrs, instr);
 
-    for (u32 i = expr->as.func_call.args.len; i > 0; --i)
-      try_gen_rc_dec(encoder, arg_indices.items[i - 1], encoder->instrs.len);
+    if (!is_built_in_to_gen)
+      for (u32 i = expr->as.func_call.args.len; i > 0; --i)
+        try_gen_rc_dec(encoder, arg_indices.items[i - 1], encoder->instrs.len);
   } break;
 
   case ExprKindLet: {
@@ -1634,6 +1688,8 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
 
+    try_gen_rc_inc(encoder, new_index);
+
     segments.len = 2;
     segments.cap = segments.len;
     segments.items = arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
@@ -1838,7 +1894,86 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
 
-    // TODO: free
+    Var zero_var = {
+      {},
+      arena_alloc(encoder->arena, sizeof(Type)),
+    };
+    zero_var.type->kind = TypeKindInt;
+    DA_APPEND(*encoder->vars, zero_var);
+    u32 zero_index = define_var(encoder);
+
+    instr = (Instr) {
+      InstrKindStore,
+      {
+        .store = {
+          zero_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = 0,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindBinOp,
+      {
+        .bin_op = {
+          cond_index,
+          temp_index,
+          zero_index,
+          BinOpKindEqInt,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 jump1_instr_index = encoder->instrs.len;
+    instr = (Instr) {
+      InstrKindJumpIfNot,
+      {
+        .jump_if_not = {
+          cond_index,
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    StringBuilder sb = {0};
+    sb_push_str(&sb, STR_LIT("ether_free_"));
+    sb_push_type_hash(&sb, built_in->args.items[0]->type);
+
+    Str name;
+    name.len = sb.len;
+    name.ptr = arena_alloc(encoder->arena, name.len);
+    memcpy(name.ptr, sb.buffer, name.len);
+    free(sb.buffer);
+
+    Indices arg_indices;
+    arg_indices.len = 1;
+    arg_indices.cap = arg_indices.len;
+    arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+    arg_indices.items[0] = 0;
+
+    instr = (Instr) {
+      InstrKindCall,
+      {
+        .call = {
+          name,
+          arg_indices,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) { InstrKindRet, {} };
+    DA_APPEND(encoder->instrs, instr);
+
+    encoder->instrs.items[jump1_instr_index].as.jump_if_not.target = encoder->instrs.len;
 
     segments.len = 1;
     segments.cap = segments.len;
@@ -2652,6 +2787,127 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       {
         .ret_val = {
           dest_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+  } else if (begins_with(built_in->name, STR_LIT("ether_free_5"))) {
+    Var next_var = {
+      {},
+      built_in->args.items[0]->type,
+    };
+    DA_APPEND(*encoder->vars, next_var);
+    u32 next_index = define_var(encoder);
+
+    Segments segments;
+    segments.len = 1;
+    segments.cap = segments.len;
+    segments.items = arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+
+    Instr instr = {
+      InstrKindCopyFromRefFixed,
+      {
+        .copy_from_ref_fixed = {
+          next_index,
+          0,
+          segments,
+          ValueKindUnsigned,
+          8,
+          true,
+          false,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    try_gen_rc_dec(encoder, next_index, encoder->instrs.len);
+
+    Type *element_type = built_in->args.items[0]->type->element_type;
+    u32 element_size = get_type_size(element_type);
+
+    if (type_is_rc(element_type)) {
+      Var element_var = {
+        {},
+        element_type,
+      };
+      DA_APPEND(*encoder->vars, element_var);
+      u32 element_index = define_var(encoder);
+
+      segments.len = 2;
+      segments.cap = segments.len;
+      segments.items = arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
+      segments.items[0].offset = 0;
+      segments.items[0].size = 8;
+      segments.items[1].offset = 8;
+      segments.items[1].size = element_size;
+
+      Instr instr = {
+        InstrKindCopyFromRefFixed,
+        {
+          .copy_from_ref_fixed = {
+            element_index,
+            0,
+            segments,
+            get_type_value_kind(element_type),
+            get_type_size(element_type),
+            true,
+            false,
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
+
+      try_gen_rc_dec(encoder, element_index, encoder->instrs.len);
+    }
+
+    StringBuilder sb = {0};
+    sb_push_str(&sb, STR_LIT("ether_free_"));
+    sb_push_type_hash(&sb, built_in->args.items[0]->type->element_type);
+
+    Var size_var = {
+      {},
+      built_in->args.items[0]->type,
+    };
+    DA_APPEND(*encoder->vars, size_var);
+    u32 size_index = define_var(encoder);
+
+    instr = (Instr) {
+      InstrKindStore,
+      {
+        .store = {
+          size_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = element_size,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    Str name;
+    name.len = sb.len;
+    name.ptr = arena_alloc(encoder->arena, name.len);
+    memcpy(name.ptr, sb.buffer, name.len);
+    free(sb.buffer);
+
+    Indices arg_indices;
+    arg_indices.len = 2;
+    arg_indices.cap = arg_indices.len;
+    arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+    arg_indices.items[0] = 0;
+    arg_indices.items[1] = size_index;
+
+    instr = (Instr) {
+      InstrKindCall,
+      {
+        .call = {
+          STR_LIT("ether_free"),
+          arg_indices,
         },
       },
     };

@@ -170,6 +170,14 @@ ether_alloc:
   pop rbx
   ret
 
+global ether_free
+ether_free:
+  sub rdi, 8
+  mov rax, 11
+  syscall
+
+  ret
+
 ether_free_4:; str
   mov rsi, [rdi+8]
   add rsi, 6

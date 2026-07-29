@@ -518,9 +518,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       }
     }
 
-    if (value_expected)
-      DA_APPEND(checker->vars, var);
-
     Type *result = arena_alloc(checker->arena, sizeof(Type));
     result->kind = TypeKindStr;
     return result;
