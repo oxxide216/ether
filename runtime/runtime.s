@@ -11,6 +11,39 @@ print:
 
 global println
 println:
+  cmp dword [rdi], 128
+  jae .skip_fits
+
+  push rbx
+  push r10
+
+  mov rbx, 0
+
+.loop_begin:
+  cmp ebx, [rdi]
+  jae .loop_end
+
+  lea r10, [rdi+4]
+  mov r10b, [r10+rbx]
+  mov [stdout_buf+rbx], r10b
+  inc ebx
+
+  jmp .loop_begin
+.loop_end:
+
+  mov byte [stdout_buf+rbx], 10
+  inc rbx
+
+  mov edx, ebx
+  lea rsi, [stdout_buf]
+  mov rdi, 1
+  mov rax, 1
+  syscall
+
+  pop r10
+  pop rbx
+  ret
+.skip_fits:
   mov edx, [rdi]
   lea rsi, [rdi+4]
   mov rdi, 1
@@ -322,3 +355,5 @@ ether_value_to_str_4_quoted:
 
 section '.data'
 new_line: db 10
+section '.bss'
+stdout_buf: resb 128
