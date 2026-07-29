@@ -2,5 +2,6 @@
   (let xs [1 2])
   (set xs (prep 0 xs))
   (set xs (app xs 3))
-  (println f'{xs}')
+  (println f'{xs}!')
+  (println f'{xs}!')
   0)
