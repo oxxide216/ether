@@ -648,14 +648,10 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
 
   if (func->expr->body.len > 0) {
     bool is_last_ret = func->expr->body.items[func->expr->body.len - 1]->kind == ExprKindRet;
-
-    if (!is_last_ret) {
-      Var var = { {}, checker.return_type };
-      DA_APPEND(checker.vars, var);
-    }
+    bool is_main = str_eq(func->expr->name, STR_LIT("main"));
 
     Type *type = check_expr(func->expr->body.items[func->expr->body.len - 1],
-                            &checker, true);
+                            &checker, !is_main);
     func = funcs->items + index;
     if (!type)
       goto fail;
@@ -720,14 +716,24 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
     }
   }
 
-  Type *main_return_type = funcs->items[0].type->return_type;
-  if (main_return_type->kind != TypeKindInt) {
-    Str main_return_type_str = get_type_str(main_return_type);
-    ERROR("Unexpected `main` function return type: "STR_FMT", expected int\n",
-          STR_ARG(main_return_type_str));
-    free_type_str(main_return_type_str, main_return_type);
-    goto fail;
-  }
+  Func *main_func = funcs->items;
+
+  Var var = {
+    {},
+    arena_alloc(arena, sizeof(Type)),
+  };
+  var.type->kind = TypeKindInt;
+  DA_APPEND(main_func->vars, var);
+
+  Expr *value_expr = arena_alloc(arena, sizeof(Expr));
+  value_expr->kind = ExprKindInt;
+  value_expr->as._int._int = 0;
+
+  Expr *ret_expr = arena_alloc(arena, sizeof(Expr));
+  ret_expr->kind = ExprKindRet;
+  ret_expr->as.ret.value = value_expr;
+
+  DA_ARENA_APPEND(main_func->expr->body, ret_expr, arena);
 
   if (protos.items)
     free(protos.items);
