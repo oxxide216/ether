@@ -9,6 +9,7 @@ Make sure to use this command, repository contains submodules
 
 ```shell
 git clone --recursive https://github.com/oxxide216/ether
+cd ether
 ```
 
 ## Building
