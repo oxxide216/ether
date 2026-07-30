@@ -437,6 +437,62 @@ Exprs parse_ex(Str code, Str file_path, Macros *macros,
   return ast;
 }
 
+static Expr *parser_parse_local_expr(Str code, Str file_path,
+                                     u32 *row, u32 *col,
+                                     Macros *macros, Arena *arena) {
+  Parser parser = {0};
+
+  Lexer lexer = {0};
+  lexer.code = code;
+  lexer.row = *row;
+  lexer.col = *col;
+  lexer.table = get_transition_table();
+  lexer.arena = arena;
+
+  TokenStatus status = TokenStatusEmpty;
+  Token token;
+  while (status != TokenStatusEOF) {
+    status = lex(&lexer, &token, file_path);
+    if (status != TokenStatusEOF && status != TokenStatusEmpty)
+      DA_APPEND(parser.tokens, token);
+  }
+
+  free(lexer.temp_sb.buffer);
+
+  Strs included_files = {0};
+  CachedASTs cached_asts = {0};
+  Strs include_paths = {0};
+
+  parser.macros = macros;
+  parser.file_path = file_path;
+  parser.included_files = &included_files;
+  parser.cached_asts = &cached_asts;
+  parser.include_paths = &include_paths;
+  parser.arena = arena;
+
+  Expr *local_expr = parser_parse_expr(&parser);
+
+  if (parser.label_indices.items)
+    free(parser.label_indices.items);
+
+  if (parser.tokens.items)
+    free(parser.tokens.items);
+
+  if (included_files.items)
+    free(included_files.items);
+
+  if (cached_asts.items)
+    free(cached_asts.items);
+
+  if (include_paths.items)
+    free(include_paths.items);
+
+  *row = lexer.row;
+  *col = lexer.col;
+
+  return local_expr;
+}
+
 static void parser_parse_macro_def(Parser *parser) {
   Macro macro = {0};
 
@@ -599,11 +655,11 @@ static Expr *parser_parse_expr(Parser *parser) {
       if (current_is_obrace && !next_is_obrace && !next_is_cbrace) {
         if (anchor < index) {
           FStrPart part = {
-            false,
             {
               str.ptr + anchor,
               index - anchor,
             },
+            NULL,
           };
           DA_APPEND(parts, part);
         }
@@ -611,49 +667,41 @@ static Expr *parser_parse_expr(Parser *parser) {
         index += 1;
         col_offset += 1;
 
-        anchor = index;
-        if (index < str.len &&
-            (isalpha(str.ptr[index]) ||
-             str.ptr[index] == '_' ||
-             str.ptr[index] == '-')) {
-          index += 1;
-          col_offset += 1;
-          while (index < str.len &&
-                 (isalnum(str.ptr[index]) ||
-                  str.ptr[index] == '_' ||
-                  str.ptr[index] == '-')) {
-            index += 1;
-            col_offset += 1;
-          }
-        } else {
-          goto fail;
-        }
+        u32 base_row = expr->loc.row + row_offset;
+        u32 base_col = expr->loc.col + col_offset + 2;
+        u32 row = base_row;
+        u32 col = base_col;
+        Str code = { str.ptr + index, 0 };
 
-        if (index < str.len && str.ptr[index] == '}')
-          goto skip_fail;
+        while (code.len < str.len - index && code.ptr[code.len] != '}')
+          ++code.len;
 
-      fail:
+        Expr *local_expr = parser_parse_local_expr(code, parser->file_path,
+                                                   &row, &col, parser->macros,
+                                                   parser->arena);
+
+        index += code.len;
+        row_offset += row - base_row;
+        col_offset += col - base_col;
+
         if (index == str.len) {
-          ERROR(STR_FMT":%u:%u: Expected `}`, but got EOS",
+          ERROR(STR_FMT":%u:%u: Expected `}`, but got EOS\n",
                 STR_ARG(parser->file_path),
                 expr->loc.row + row_offset + 1,
                 expr->loc.col + col_offset + 1);
-        } else {
-          ERROR(STR_FMT":%u:%u: Expected `}`, but got `%c`",
+          exit(1);
+        } else if (str.ptr[index] != '}') {
+          ERROR(STR_FMT":%u:%u: Expected `}`, but got `%c`\n",
                 STR_ARG(parser->file_path),
                 expr->loc.row + row_offset + 1,
                 expr->loc.col + col_offset + 1,
                 str.ptr[index]);
-          INFO("Only identifiers are supported in format strings\n");
+          exit(1);
         }
-        exit(1);
-      skip_fail:
+
         FStrPart part = {
-          true,
-          {
-            str.ptr + anchor,
-            index - anchor,
-          },
+          {},
+          local_expr,
         };
         DA_APPEND(parts, part);
 
@@ -681,11 +729,11 @@ static Expr *parser_parse_expr(Parser *parser) {
 
     if (anchor < index) {
       FStrPart part = {
-        false,
         {
           str.ptr + anchor,
           index - anchor,
         },
+        NULL,
       };
       DA_APPEND(parts, part);
     }

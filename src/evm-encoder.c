@@ -743,11 +743,18 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     // Size (because strings are pascal-like), null-terminator and non-static marker
     u32 start_size = 6;
+    Indices part_var_indices = {0};
 
     for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
       FStrPart *part = expr->as.fstr.parts.items + i;
-      if (!part->is_var)
+      if (part->expr) {
+        u32 part_var_index = define_var(encoder);
+        encode_expr(encoder, part->expr, part_var_index);
+        DA_APPEND(part_var_indices, part_var_index);
+      } else {
         start_size += part->str.len;
+        DA_APPEND(part_var_indices, (u32) -1);
+      }
     }
 
     u32 size_index = define_var(encoder);
@@ -771,20 +778,20 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
       FStrPart *part = expr->as.fstr.parts.items + i;
-      if (!part->is_var)
+      if (!part->expr)
         continue;
 
-      u32 var_index = get_var_index(encoder->vars, encoder->vars_defined, part->str);
+      u32 part_var_index = part_var_indices.items[i];
 
       Indices arg_indices;
       arg_indices.len = 1;
       arg_indices.cap = arg_indices.len;
       arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
-      arg_indices.items[0] = var_index;
+      arg_indices.items[0] = part_var_index;
 
       StringBuilder sb = {0};
       sb_push_str(&sb, STR_LIT("ether_get_value_len_as_str_"));
-      sb_push_type_hash(&sb, encoder->vars->items[var_index].type);
+      sb_push_type_hash(&sb, encoder->vars->items[part_var_index].type);
 
       Str name;
       name.len = sb.len;
@@ -792,7 +799,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       memcpy(name.ptr, sb.buffer, name.len);
       free(sb.buffer);
 
-      if (encoder->vars->items[var_index].type->kind == TypeKindList)
+      if (encoder->vars->items[part_var_index].type->kind == TypeKindList)
         built_ins_to_gen_append_rec(encoder, name, temp_size_index, arg_indices);
 
       instr = (Instr) {
@@ -923,13 +930,13 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       arg_indices.items[1] = size_index;
 
       StringBuilder sb = {0};
-      if (part->is_var) {
-        u32 var_index = get_var_index(encoder->vars, encoder->vars_defined, part->str);
+      if (part->expr) {
+        u32 part_var_index = part_var_indices.items[i];
 
-        arg_indices.items[2] = var_index;
+        arg_indices.items[2] = part_var_index;
 
         sb_push_str(&sb, STR_LIT("ether_value_to_str_"));
-        sb_push_type_hash(&sb, encoder->vars->items[var_index].type);
+        sb_push_type_hash(&sb, encoder->vars->items[part_var_index].type);
       } else {
         instr = (Instr) {
           InstrKindStoreData,
@@ -963,7 +970,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       memcpy(name.ptr, sb.buffer, name.len);
       free(sb.buffer);
 
-      if (part->is_var &&
+      if (part->expr &&
           encoder->vars->items[arg_indices.items[2]].type->kind == TypeKindList)
         built_ins_to_gen_append_rec(encoder, name, temp_size_index, arg_indices);
 
@@ -996,6 +1003,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
         DA_APPEND(encoder->instrs, instr);
       }
     }
+
+    if (part_var_indices.items)
+      free(part_var_indices.items);
   } break;
 
   case ExprKindList: {

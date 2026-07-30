@@ -487,6 +487,30 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindFStr: {
+    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
+      FStrPart *part = expr->as.fstr.parts.items + i;
+      if (!part->expr)
+        continue;
+
+      u32 part_var_index = checker->vars.len;
+      Var part_var = { {}, NULL };
+      DA_APPEND(checker->vars, part_var);
+
+      Type *part_type = check_expr(part->expr, checker, true);
+      if (!part_type)
+        return NULL;
+
+      if (part_type->kind == TypeKindFunc) {
+        Str type_str = get_type_str(part_type);
+        CERRORF(expr, "Cannot format value of type "STR_FMT"\n",
+                STR_ARG(type_str));
+        free_type_str(type_str, part_type);
+        return NULL;
+      }
+
+      checker->vars.items[part_var_index].type = part_type;
+    }
+
     Type *type = arena_alloc(checker->arena, sizeof(Type));
     type->kind = TypeKindInt;
 
@@ -495,27 +519,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     if (value_expected) {
       DA_APPEND(checker->vars, var);
       DA_APPEND(checker->vars, var);
-    }
-
-    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
-      FStrPart *part = expr->as.fstr.parts.items + i;
-      if (!part->is_var)
-        continue;
-
-      u32 index = get_var_index(&checker->vars, checker->vars.len, part->str);
-      if (index == (u32) -1) {
-        CERRORF(expr, "Variable "STR_FMT" was not defined before usage\n",
-                STR_ARG(part->str));
-        return NULL;
-      }
-
-      if (checker->vars.items[index].type->kind == TypeKindFunc) {
-        Str type_str = get_type_str(checker->vars.items[index].type);
-        CERRORF(expr, "Cannot format variable "STR_FMT" of type "STR_FMT"\n",
-                STR_ARG(part->str), STR_ARG(type_str));
-        free_type_str(type_str, checker->vars.items[index].type);
-        return NULL;
-      }
     }
 
     Type *result = arena_alloc(checker->arena, sizeof(Type));

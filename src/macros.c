@@ -136,6 +136,10 @@ static void clone_expr(Expr **expr, Strs *arg_names, Arena *arena) {
     memcpy(new_expr->as.fstr.parts.items,
            (*expr)->as.fstr.parts.items,
            new_expr->as.fstr.parts.len * sizeof(FStrPart));
+
+    for (u32 i = 0; i < new_expr->as.fstr.parts.len; ++i)
+      if (new_expr->as.fstr.parts.items[i].expr)
+        clone_expr(&new_expr->as.fstr.parts.items[i].expr, arg_names, arena);
   } break;
 
   case ExprKindList: {
@@ -250,16 +254,10 @@ static void rename_args_expr(Expr *expr, Strs *prev_arg_names,
   case ExprKindFStr: {
     for (u32 i = 0; i < expr->as.fstr.parts.len; ++i) {
       FStrPart *part = expr->as.fstr.parts.items + i;
-      if (!part->is_var)
+      if (!part->expr)
         continue;
 
-      for (u32 j = 0; j < prev_arg_names->len; ++j) {
-        if (str_eq(part->str, prev_arg_names->items[j])) {
-          part->str = new_arg_names->items[j];
-
-          break;
-        }
-      }
+      rename_args_expr(part->expr, prev_arg_names, new_arg_names, arena);
     }
   } break;
 
@@ -509,7 +507,11 @@ void expand_macros(Expr *expr, Macros *macros,
     INLINE_THEN_EXPAND_BLOCK(expr->as.bin_op.args);
   } break;
 
-  case ExprKindFStr: break;
+  case ExprKindFStr: {
+    for (u32 i = 0; i < expr->as.fstr.parts.len; ++i)
+      if (expr->as.fstr.parts.items[i].expr)
+        INLINE_THEN_EXPAND(expr->as.fstr.parts.items[i].expr);
+  } break;
 
   case ExprKindList: {
     INLINE_THEN_EXPAND_BLOCK(expr->as.list.elements);

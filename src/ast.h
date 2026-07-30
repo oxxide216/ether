@@ -123,8 +123,8 @@ typedef struct {
 } ExprBinOp;
 
 typedef struct {
-  bool is_var;
-  Str  str;
+  Str   str;
+  Expr *expr;
 } FStrPart;
 
 typedef Da(FStrPart) FStrParts;

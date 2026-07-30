@@ -1,10 +1,3 @@
-(macro list (...elements)
-  [elements])
-
 (fun main ()
-  (let xs (list 1 2))
-  (set xs (prep 0 xs))
-  (set xs (app xs 3))
-  (println f'{xs}!')
-  (println f'{xs}!')
+  (println f'2 + 2 = {(+ 2 2)}')
   0)
