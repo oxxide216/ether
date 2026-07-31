@@ -1,2 +1,2 @@
 (fun main ()
-  (println f'2 + 2 = {(+ 2 2)}'))
+  (println f'2 + 2 = {(+ 2 2)} ({(println \'\')})'))

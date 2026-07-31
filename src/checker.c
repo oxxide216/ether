@@ -508,7 +508,33 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
         return NULL;
       }
 
-      checker->vars.items[part_var_index].type = part_type;
+      if (part_type->kind == TypeKindUnit) {
+        part->str = STR_LIT("unit");
+        part->expr = NULL;
+        DA_REMOVE_AT(checker->vars, part_var_index);
+
+        if (i > 0 && !part[-1].expr) {
+          Str new_str;
+          new_str.len = part[-1].str.len + part->str.len;
+          new_str.ptr = arena_alloc(checker->arena, new_str.len);
+          memcpy(new_str.ptr, part[-1].str.ptr, part[-1].str.len);
+          memcpy(new_str.ptr + part[-1].str.len, part->str.ptr, part->str.len);
+          part[-1].str = new_str;
+          DA_REMOVE_AT(expr->as.fstr.parts, i);
+          --i;
+        } else if (i + 1 < expr->as.fstr.parts.len && !part[1].expr) {
+          Str new_str;
+          new_str.len = part[1].str.len + part->str.len;
+          new_str.ptr = arena_alloc(checker->arena, new_str.len);
+          memcpy(new_str.ptr, part[1].str.ptr, part[1].str.len);
+          memcpy(new_str.ptr + part[1].str.len, part->str.ptr, part->str.len);
+          part[1].str = new_str;
+          DA_REMOVE_AT(expr->as.fstr.parts, i);
+          --i;
+        }
+      } else {
+        checker->vars.items[part_var_index].type = part_type;
+      }
     }
 
     Type *type = arena_alloc(checker->arena, sizeof(Type));
