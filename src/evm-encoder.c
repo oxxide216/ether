@@ -422,12 +422,16 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     u32 index = get_var_index(encoder->vars, encoder->vars_defined, expr->as.ident.name);
     if (index == (u32) -1) {
       index = get_func_index(encoder->funcs, expr->as.ident.name);
-      Str temp_name = mangle_func_name(encoder->funcs->items + index);
-      Str name;
-      name.len = temp_name.len;
-      name.ptr = arena_alloc(encoder->arena, name.len);
-      memcpy(name.ptr, temp_name.ptr, name.len);
-      free(temp_name.ptr);
+      Func *func = encoder->funcs->items + index;
+      Str name = func->expr->name;
+      if (!str_eq(name, STR_LIT("main")) && !func->is_lambda) {
+        Str temp_name = mangle_func_name(encoder->funcs->items + index);
+        name.len = temp_name.len;
+        name.ptr = arena_alloc(encoder->arena, name.len);
+        memcpy(name.ptr, temp_name.ptr, name.len);
+        free(temp_name.ptr);
+      }
+
       Instr instr = {
         InstrKindRefProc,
         {
@@ -452,7 +456,21 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     }
   } break;
 
-  case ExprKindFunc: break;
+  case ExprKindFunc: {
+    if (dest_index == (u32) -1)
+      break;
+
+    Instr instr = {
+      InstrKindRefProc,
+      {
+        .ref_proc = {
+          dest_index,
+          expr->as.func.name,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+  } break;
 
   case ExprKindFuncCall: {
     Indices arg_indices;
@@ -478,11 +496,14 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
         name = expr->as.func_call.built_in->name;
       } else {
         u32 func_index = get_func_index(encoder->funcs, expr->as.func_call.func->as.ident.name);
-        Str temp_name = mangle_func_name(encoder->funcs->items + func_index);
-        name.len = temp_name.len;
-        name.ptr = arena_alloc(encoder->arena, name.len);
-        memcpy(name.ptr, temp_name.ptr, name.len);
-        free(temp_name.ptr);
+        Func *func = encoder->funcs->items + func_index;
+        if (!func->is_lambda) {
+          Str temp_name = mangle_func_name(func);
+          name.len = temp_name.len;
+          name.ptr = arena_alloc(encoder->arena, name.len);
+          memcpy(name.ptr, temp_name.ptr, name.len);
+          free(temp_name.ptr);
+        }
       }
 
       is_built_in_to_gen = str_eq(name, STR_LIT("prep")) ||
@@ -2935,12 +2956,15 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
   encoder.funcs = funcs;
 
   Da(Instrs) instrss = {0};
+  u32 funcs_encoded = 0;
 
   for (u32 i = 0; i < funcs->len; ++i) {
     Func *func = funcs->items + i;
 
     if (!func->is_checked)
       continue;
+
+    ++funcs_encoded;
 
     encoder.instrs = (Instrs) {0};
     encoder.vars = &func->vars;
@@ -2960,14 +2984,15 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       // For TCO
       if (encoder.instrs.len > 1) {
         Str func_name = func->expr->name;
-        if (!str_eq(func->expr->name, STR_LIT("main")))
+        bool mangle = !str_eq(func->expr->name, STR_LIT("main")) && !func->is_lambda;
+        if (mangle)
           func_name = mangle_func_name(func);
         if ((last_instr->kind == InstrKindCall &&
              str_eq(last_instr->as.call.name, func_name)) ||
             (last_instr->kind == InstrKindCallAssign &&
              str_eq(last_instr->as.call_assign.name, func_name)))
           --insert_point;
-        if (!str_eq(func->expr->name, STR_LIT("main")))
+        if (mangle)
           free(func_name.ptr);
       }
     }
@@ -3016,16 +3041,20 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       encode_type(stream, &type);
     }
 
-    Instrs *instrs = instrss.items + funcs->len + i;
+    Instrs *instrs = instrss.items + funcs_encoded + i;
     fwrite(&instrs->len, sizeof(instrs->len), 1, stream);
     for (u32 j = 0; j < instrs->len; ++j)
       encode_instr(encoder.stream, instrs->items + j);
   }
 
+  funcs_encoded = 0;
   for (u32 i = 0; i < funcs->len; ++i) {
     Func *func = funcs->items + i;
 
-    if (str_eq(func->expr->name, STR_LIT("main"))) {
+    if (!func->is_checked)
+      continue;
+
+    if (str_eq(func->expr->name, STR_LIT("main")) || func->is_lambda) {
       encode_str(stream, func->expr->name);
     } else {
       Str name = mangle_func_name(func);
@@ -3038,10 +3067,12 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       encode_type(stream, func->type->arg_types.items[j]);
     encode_type(stream, func->type->return_type);
 
-    Instrs *instrs = instrss.items + i;
+    Instrs *instrs = instrss.items + funcs_encoded;
     fwrite(&instrs->len, sizeof(instrs->len), 1, stream);
     for (u32 j = 0; j < instrs->len; ++j)
       encode_instr(encoder.stream, instrs->items + j);
+
+    ++funcs_encoded;
   }
 
   fwrite(&encoder.data.len, sizeof(encoder.data.len), 1, stream);

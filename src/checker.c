@@ -16,25 +16,13 @@
          (expr)->loc.col + 1,            \
          __VA_ARGS__)
 
-typedef Da(ExprFunc *) FuncProtos;
-
 typedef struct {
-  Type       *return_type;
-  Funcs      *funcs;
-  Arena      *arena;
-  Vars        vars;
-  FuncProtos *protos;
+  Type  *return_type;
+  Funcs *funcs;
+  Arena *arena;
+  Vars   vars;
+  u32   *lambda_counter;
 } FuncChecker;
-
-ExprFunc *get_func_expr(FuncProtos *protos, Str name) {
-  for (u32 i = 0; i < protos->len; ++i) {
-    ExprFunc *expr = protos->items[i];
-    if (str_eq(expr->name, name))
-      return expr;
-  }
-
-  return NULL;
-}
 
 void free_type_str(Str str, Type *type) {
   if (type->kind == TypeKindFunc)
@@ -125,6 +113,14 @@ bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
   return true;
 }
 
+Func *get_func(Funcs *funcs, Str name) {
+  for (u32 i = 0; i < funcs->len; ++i)
+    if (str_eq(funcs->items[i].expr->name, name))
+      return funcs->items + i;
+
+  return NULL;
+}
+
 BuiltIn *get_built_in(Str name) {
   for (u32 i = 0; i < built_ins_len; ++i)
     if (!built_ins[i].is_internal && str_eq(built_ins[i].name, name))
@@ -133,8 +129,19 @@ BuiltIn *get_built_in(Str name) {
   return NULL;
 }
 
-Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena);
-bool  check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena);
+void make_func_expr_name_lambda_name(ExprFunc *expr, Arena *arena, u32 *lambda_counter) {
+  StringBuilder sb = {0};
+  sb_push(&sb, "lambda_");
+  sb_push_u32(&sb, (*lambda_counter)++);
+
+  expr->name.len = sb.len;
+  expr->name.ptr = arena_alloc(arena, expr->name.len);
+  memcpy(expr->name.ptr, sb.buffer, expr->name.len);
+  free(sb.buffer);
+}
+
+Type *add_func(ExprFunc *expr, bool is_lambda, Funcs *funcs, Arena *arena);
+bool  check_func(u32 index, Funcs *funcs, Arena *arena, u32 *lambda_counter);
 
 Type *check_block(Exprs *block, FuncChecker *checker, bool value_expected);
 
@@ -159,10 +166,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindBlock: {
-    u32 prev_protos_len = checker->protos->len;
-    Type *result = check_block(&expr->as.block, checker, value_expected);
-    checker->protos->len = prev_protos_len;
-    return result;
+    return check_block(&expr->as.block, checker, value_expected);
   }
 
   case ExprKindIdent: {
@@ -173,10 +177,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     u32 func_index = get_func_index(checker->funcs, expr->as.ident.name);
     if (func_index != (u32) -1)
       return checker->funcs->items[func_index].type;
-
-    ExprFunc *func_expr = get_func_expr(checker->protos, expr->as.ident.name);
-    if (func_expr)
-      return add_func(func_expr, checker->funcs, checker->arena);
 
     BuiltIn *built_in = get_built_in(expr->as.ident.name);
     if (built_in) {
@@ -194,11 +194,14 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindFunc: {
-    DA_APPEND(*checker->protos, &expr->as.func);
+    bool is_lambda = expr->as.func.name.len == 0;
+    if (is_lambda)
+      make_func_expr_name_lambda_name(&expr->as.func, checker->arena, checker->lambda_counter);
 
-    Type *result = arena_alloc(checker->arena, sizeof(Type));
-    result->kind = TypeKindUnit;
-    return result;
+    Func *func = get_func(checker->funcs, expr->as.func.name);
+    if (func)
+      return func->type;
+    return add_func(&expr->as.func, is_lambda, checker->funcs, checker->arena);
   }
 
   case ExprKindFuncCall: {
@@ -290,7 +293,8 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
                                                   func->expr->name,
                                                   &arg_types);
         if (index == (u32) -1)
-          func_type = add_func(func->expr, checker->funcs, checker->arena);
+          func_type = add_func(func->expr, func->is_lambda,
+                               checker->funcs, checker->arena);
         else
           func_type = checker->funcs->items[index].type;
         updated_func = true;
@@ -312,7 +316,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       free(arg_types.items);
 
     if (!check_func(func_type->func_index, checker->funcs,
-                    checker->protos, checker->arena))
+                    checker->arena, checker->lambda_counter))
       return NULL;
 
     return func_type->return_type;
@@ -612,12 +616,13 @@ Type *check_block(Exprs *block, FuncChecker *checker, bool value_expected) {
   return result;
 }
 
-Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena) {
+Type *add_func(ExprFunc *expr, bool is_lambda, Funcs *funcs, Arena *arena) {
   Func new_func = {
     expr,
     arena_alloc(arena, sizeof(Type)),
     expr->args,
     {},
+    is_lambda,
     false,
   };
   *new_func.type = (Type) {
@@ -643,7 +648,7 @@ Type *add_func(ExprFunc *expr, Funcs *funcs, Arena *arena) {
   return funcs->items[funcs->len - 1].type;
 }
 
-bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
+bool check_func(u32 index, Funcs *funcs, Arena *arena, u32 *lambda_counter) {
   Func *func = funcs->items + index;
 
   if (func->is_checked)
@@ -654,7 +659,7 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
   checker.return_type = func->type->return_type;
   checker.funcs = funcs;
   checker.arena = arena;
-  checker.protos = protos;
+  checker.lambda_counter = lambda_counter;
 
   for (u32 i = 0; i < func->expr->args.len; ++i) {
     Var var = {
@@ -664,11 +669,9 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
     DA_APPEND(checker.vars, var);
   }
 
-  u32 prev_protos_len = protos->len;
-
   for (u32 i = 0; i + 1 < func->expr->body.len; ++i) {
     if (!check_expr(func->expr->body.items[i], &checker, false))
-      goto fail;
+      return false;
     func = funcs->items + index;
   }
 
@@ -676,11 +679,16 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
     bool is_last_ret = func->expr->body.items[func->expr->body.len - 1]->kind == ExprKindRet;
     bool is_main = str_eq(func->expr->name, STR_LIT("main"));
 
+    if (!is_last_ret && !is_main) {
+      Var var = { {}, checker.return_type };
+      DA_APPEND(checker.vars, var);
+    }
+
     Type *type = check_expr(func->expr->body.items[func->expr->body.len - 1],
                             &checker, !is_main);
     func = funcs->items + index;
     if (!type)
-      goto fail;
+      return false;
 
     if (!is_last_ret) {
       if (!type_eq(type, checker.return_type)) {
@@ -691,7 +699,7 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
                 STR_ARG(type_str), STR_ARG(return_type_str));
         free_type_str(type_str, type);
         free_type_str(return_type_str, checker.return_type);
-        goto fail;
+        return false;
       }
 
       *checker.return_type = *type;
@@ -699,38 +707,39 @@ bool check_func(u32 index, Funcs *funcs, FuncProtos *protos, Arena *arena) {
   }
 
   func->vars = checker.vars;
-
-  protos->len = prev_protos_len;
   return true;
-fail:
-  protos->len = prev_protos_len;
-  return false;
 }
 
 bool check(Exprs *block, Funcs *funcs, Arena *arena) {
-  FuncProtos protos = {0};
+  ExprFunc *main_expr = NULL;
+  u32 main_func_index = 0;
 
-  for (u32 i = 0; i < block->len; ++i)
-    if (block->items[i]->kind == ExprKindFunc)
-      DA_APPEND(protos, &block->items[i]->as.func);
+  for (u32 i = 0; i < block->len; ++i) {
+    if (block->items[i]->kind == ExprKindFunc) {
+      if (str_eq(block->items[i]->as.func.name, STR_LIT("main"))) {
+        main_expr = &block->items[i]->as.func;
+        main_func_index = funcs->len;
+      }
+      add_func(&block->items[i]->as.func, false, funcs, arena);
+    }
+  }
 
-  ExprFunc *main_expr = get_func_expr(&protos, STR_LIT("main"));
   if (!main_expr) {
     ERROR("`main` function was not defined\n");
     INFO("Try defining it like this:\n");
     printf("  (fun main()\n");
-    printf("    0)\n");
-    goto fail;
+    printf("    (println 'Hello, World!'))\n");
+    return false;
   }
 
   if (main_expr->args.len != 0) {
     ERROR("`main` function can only have zero arguments\n");
-    goto fail;
+    return false;
   }
 
-  add_func(main_expr, funcs, arena);
-  if (!check_func(0, funcs, &protos, arena))
-    goto fail;
+  u32 lambda_counter = 0;
+  if (!check_func(main_func_index, funcs, arena, &lambda_counter))
+    return false;
 
   for (u32 i = 0; i < funcs->len; ++i) {
     Func *func = funcs->items + i;
@@ -742,7 +751,7 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
     }
   }
 
-  Func *main_func = funcs->items;
+  Func *main_func = funcs->items + main_func_index;
 
   Var var = {
     {},
@@ -761,11 +770,5 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
 
   DA_ARENA_APPEND(main_func->expr->body, ret_expr, arena);
 
-  if (protos.items)
-    free(protos.items);
   return true;
-fail:
-  if (protos.items)
-    free(protos.items);
-  return false;
 }

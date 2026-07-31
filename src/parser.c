@@ -279,16 +279,24 @@ static TokenStatus lex(Lexer *lexer, Token *token, Str file_path) {
   return TokenStatusEOF;
 }
 
+static Token *token_process_if_ident(Token *token) {
+  if (token->id == TT_IDENT)
+    for (u32 i = 0; i < token->lexeme.len; ++i)
+      if (token->lexeme.ptr[i] == '-')
+        token->lexeme.ptr[i] = '_';
+  return token;
+}
+
 static Token *parser_next_token(Parser *parser) {
   if (parser->index == parser->tokens.len)
     return NULL;
-  return parser->tokens.items + parser->index++;
+  return token_process_if_ident(parser->tokens.items + parser->index++);
 }
 
 static Token *parser_peek_token(Parser *parser) {
   if (parser->index == parser->tokens.len)
     return NULL;
-  return parser->tokens.items + parser->index;
+  return token_process_if_ident(parser->tokens.items + parser->index);
 }
 
 static void print_id_mask(u64 id_mask) {
@@ -531,7 +539,9 @@ static void parser_parse_macro_def(Parser *parser) {
 static ExprFunc parser_parse_func(Parser *parser) {
   ExprFunc result = {0};
 
-  result.name = parser_expect_token(parser, MASK(TT_IDENT))->lexeme;
+  Token *token = parser_peek_token(parser);
+  if (token && token->id == TT_IDENT)
+    result.name = parser_expect_token(parser, MASK(TT_IDENT))->lexeme;
 
   parser_expect_token(parser, MASK(TT_OPAREN));
   Token *arg_token = parser_expect_token(parser, MASK(TT_IDENT) | MASK(TT_CPAREN));

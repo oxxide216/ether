@@ -177,6 +177,7 @@ typedef struct {
   Type     *type;
   Strs      arg_names;
   Vars      vars;
+  bool      is_lambda;
   bool      is_checked;
 } Func;
 
