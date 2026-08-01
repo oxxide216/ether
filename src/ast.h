@@ -168,6 +168,7 @@ struct Expr {
 typedef struct {
   Str   name;
   Type *type;
+  bool  is_captured;
 } Var;
 
 typedef Da(Var) Vars;
@@ -177,6 +178,7 @@ typedef struct {
   Type     *type;
   Strs      arg_names;
   Vars      vars;
+  Vars      captured_vars;
   bool      is_lambda;
   bool      is_checked;
 } Func;

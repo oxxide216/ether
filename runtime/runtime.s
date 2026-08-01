@@ -181,10 +181,15 @@ ether_free:
 ether_free_4:; str
   mov rsi, [rdi+8]
   add rsi, 6
-  mov rax, 11
-  syscall
+  jmp ether_free
+
+global ether_rc_inc_1 ; func
+ether_rc_inc_1:
+  inc qword [rsi-8]
 
   ret
+
+; ether_rc_dec_1 (for funcs) is generated because it has to be generic
 
 global ether_rc_inc_4 ; str
 ether_rc_inc_4:

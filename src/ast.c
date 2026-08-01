@@ -46,7 +46,7 @@ void type_free(Type *type) {
 u32 get_type_size(Type *type) {
   switch (type->kind) {
   case TypeKindUnit: return 0;
-  case TypeKindFunc: return 8;
+  case TypeKindFunc: return 16;
   case TypeKindInt:  return 8;
   case TypeKindBool: return 4;
   case TypeKindStr:  return 8;
