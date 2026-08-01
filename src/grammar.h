@@ -152,13 +152,11 @@ TransitionCol table_col_ccurly[] = {
 
 TransitionCol table_col_str[] = {
   { 1, 34, 34, 0 },
-  { 1, 39, 39, 0 },
 };
 
 TransitionCol table_col_fstr[] = {
   { 1, 102, 102, 2 },
   { 2, 34, 34, 0 },
-  { 2, 39, 39, 0 },
 };
 
 TransitionCol table_col_unpack[] = {
