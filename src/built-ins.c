@@ -78,6 +78,7 @@ BuiltIn built_ins[] = {
   { true, STR_LIT("ether_rc_inc_1"), TYPE(TypeKindInt), 1, { TYPE(TypeKindFunc) }, NULL, NULL },
   { true, STR_LIT("ether_rc_inc_4"), TYPE(TypeKindInt), 1, { TYPE(TypeKindStr) }, NULL, NULL },
   { true, STR_LIT("ether_rc_inc_5"), TYPE(TypeKindInt), 1, { TYPE(TypeKindList) }, NULL, NULL },
+  { true, STR_LIT("ether_rc_dec_1"), TYPE(TypeKindInt), 1, { TYPE(TypeKindFunc) }, NULL, NULL },
   { true, STR_LIT("ether_rc_dec_4"), TYPE(TypeKindInt), 1, { TYPE(TypeKindStr) }, NULL, NULL },
 };
 

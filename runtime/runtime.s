@@ -26,7 +26,7 @@ println:
   lea r10, [rdi+4]
   mov r10b, [r10+rbx]
   mov [stdout_buf+rbx], r10b
-  inc ebx
+  inc rbx
 
   jmp .loop_begin
 .loop_end:
@@ -172,14 +172,23 @@ ether_alloc:
 
 global ether_free
 ether_free:
+  push rdi
+  push rsi
+  lea rdi, [freed_str]
+  call print
+  pop rsi
+  pop rdi
+
+  add rsi, 8
   sub rdi, 8
   mov rax, 11
   syscall
 
   ret
 
+global ether_free_4
 ether_free_4:; str
-  mov rsi, [rdi+8]
+  mov esi, [rdi]
   add rsi, 6
   jmp ether_free
 
@@ -188,8 +197,6 @@ ether_rc_inc_1:
   inc qword [rsi-8]
 
   ret
-
-; ether_rc_dec_1 (for funcs) is generated because it has to be generic
 
 global ether_rc_inc_4 ; str
 ether_rc_inc_4:
@@ -201,6 +208,25 @@ ether_rc_inc_4:
   je .skip_static
   inc qword [rdi-8]
 .skip_static:
+
+  ret
+
+global ether_rc_inc_5 ; list
+ether_rc_inc_5:
+  cmp rdi, 0
+  je .skip_null
+  inc qword [rdi-8]
+.skip_null:
+
+  ret
+
+global ether_rc_dec_1 ; func
+ether_rc_dec_1:
+  cmp rsi, 0
+  je .skip_null
+  mov rdx, [rsi]
+  call rdx
+.skip_null:
 
   ret
 
@@ -216,15 +242,6 @@ ether_rc_dec_4:
   cmp qword[rdi-8], 0
   jle ether_free_4
 .skip_static:
-
-  ret
-
-global ether_rc_inc_5 ; list
-ether_rc_inc_5:
-  cmp rdi, 0
-  je .skip_null
-  inc qword [rdi-8]
-.skip_null:
 
   ret
 
@@ -368,5 +385,6 @@ ether_value_to_str_4_quoted:
 
 section '.data'
 new_line: db 10
+freed_str: db 7, 0, 0, 0, "Freed!", 10, 0
 section '.bss'
 stdout_buf: resb 128

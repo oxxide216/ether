@@ -1,4 +1,4 @@
 (fun main ()
   (let y 2)
   (let add (fun (x) (+ x y)))
-  (println f'2 + 2 = {(add 2)}'))
+  (println f"2 + 2 = {(add 2)}"))

@@ -249,6 +249,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       var.type->kind = TypeKindInt;
       DA_APPEND(checker->vars, var);
       DA_APPEND(checker->vars, var);
+      DA_APPEND(checker->vars, var);
 
       for (u32 i = 0; i < func->captured_vars.len; ++i) {
         if (get_var_index(&checker->vars,
