@@ -172,13 +172,6 @@ ether_alloc:
 
 global ether_free
 ether_free:
-  push rdi
-  push rsi
-  lea rdi, [freed_str]
-  call print
-  pop rsi
-  pop rdi
-
   add rsi, 8
   sub rdi, 8
   mov rax, 11
@@ -385,6 +378,5 @@ ether_value_to_str_4_quoted:
 
 section '.data'
 new_line: db 10
-freed_str: db 7, 0, 0, 0, "Freed!", 10, 0
 section '.bss'
 stdout_buf: resb 128
