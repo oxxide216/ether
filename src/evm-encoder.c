@@ -2155,53 +2155,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
 
-    Vars *captured_vars = &encoder->funcs->items[built_in->args.items[0]->type->func_index].captured_vars;
-    for (u32 i = 0; i < captured_vars->len; ++i) {
-      if (!type_is_rc(captured_vars->items[i].type))
-        continue;
-
-      Var captured_var = {
-        {},
-        captured_vars->items[i].type,
-        false,
-      };
-      DA_APPEND(*encoder->vars, captured_var);
-      u32 captured_index = define_var(encoder);
-
-      segments.len = i + 2;
-      segments.cap = segments.len;
-      segments.items = arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
-
-      segments.items[0].offset = 0;
-      segments.items[0].size = 8;
-
-      i32 offset = 0;
-      for (u32 j = 0; j <= i; ++j) {
-        u32 size = get_type_size(captured_vars->items[j].type);
-        segments.items[j + 1].offset = offset;
-        segments.items[j + 1].size = size;
-        offset += size;
-      }
-
-      Instr instr = {
-        InstrKindCopyFromRefFixed,
-        {
-          .copy_from_ref_fixed = {
-            captured_index,
-            ctx_index,
-            segments,
-            ValueKindUnsigned,
-            8,
-            true,
-            false,
-          },
-        },
-      };
-      DA_APPEND(encoder->instrs, instr);
-
-      try_gen_rc_dec(encoder, captured_index);
-    }
-
     Var refs_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
@@ -2329,6 +2282,53 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       },
     };
     DA_APPEND(encoder->instrs, instr);
+
+    Vars *captured_vars = &encoder->funcs->items[built_in->args.items[0]->type->func_index].captured_vars;
+    for (u32 i = 0; i < captured_vars->len; ++i) {
+      if (!type_is_rc(captured_vars->items[i].type))
+        continue;
+
+      Var captured_var = {
+        {},
+        captured_vars->items[i].type,
+        false,
+      };
+      DA_APPEND(*encoder->vars, captured_var);
+      u32 captured_index = define_var(encoder);
+
+      segments.len = i + 2;
+      segments.cap = segments.len;
+      segments.items = arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
+
+      segments.items[0].offset = 0;
+      segments.items[0].size = 8;
+
+      i32 offset = 0;
+      for (u32 j = 0; j <= i; ++j) {
+        u32 size = get_type_size(captured_vars->items[j].type);
+        segments.items[j + 1].offset = offset;
+        segments.items[j + 1].size = size;
+        offset += size;
+      }
+
+      Instr instr = {
+        InstrKindCopyFromRefFixed,
+        {
+          .copy_from_ref_fixed = {
+            captured_index,
+            ctx_index,
+            segments,
+            ValueKindUnsigned,
+            8,
+            true,
+            false,
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
+
+      try_gen_rc_dec(encoder, captured_index);
+    }
 
     Var size_var = {
       {},
