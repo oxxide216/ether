@@ -231,7 +231,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     for (u32 i = 0; i < checker->vars.len; ++i) {
       if (checker->vars.items[i].name.len > 0) {
         func->captured_vars.items[index] = checker->vars.items[i];
-        func->captured_vars.items[index].is_captured = true;
         ++index;
       }
     }
@@ -244,7 +243,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       Var var = {
         {},
         arena_alloc(checker->arena, sizeof(Type)),
-        false,
       };
       var.type->kind = TypeKindInt;
       DA_APPEND(checker->vars, var);
@@ -258,7 +256,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
           Var var = {
             func->captured_vars.items[i].name,
             func->captured_vars.items[i].type,
-            false,
           };
           DA_APPEND(checker->vars, var);
         }
@@ -279,7 +276,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       Var var = {
         {},
         NULL,
-        false,
       };
       DA_APPEND(checker->vars, var);
     }
@@ -302,7 +298,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       Var ctx_var = {
         {},
         arena_alloc(checker->arena, sizeof(Type)),
-        false,
       };
       ctx_var.type->kind = TypeKindInt;
       DA_APPEND(checker->vars, ctx_var);
@@ -314,7 +309,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     u32 vars_start = checker->vars.len;
 
     for (u32 i = 0; i < args->len; ++i) {
-      Var var = { {}, NULL, false };
+      Var var = { {}, NULL };
       DA_APPEND(checker->vars, var);
 
       Type *arg_type = check_expr(args->items[i], checker, true);
@@ -399,7 +394,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
   case ExprKindLet: {
     u32 var_index = checker->vars.len;
-    Var var = { {}, NULL, false };
+    Var var = { {}, NULL };
     DA_APPEND(checker->vars, var);
 
     Type *type = check_expr(expr->as.let.value, checker, true);
@@ -413,18 +408,37 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindSet: {
+    u32 var_index = get_var_index(&checker->vars, checker->vars.len, expr->as.set.name);
+    Var *var = NULL;
+    if (var_index == (u32) -1) {
+      if (checker->captured_vars) {
+        var_index = get_var_index(checker->captured_vars, checker->vars.len, expr->as.set.name);
+        if (var_index != (u32) -1) {
+          u32 used_index = get_var_index(&checker->used_captured_vars,
+                                         checker->used_captured_vars.len,
+                                         expr->as.set.name);
+          if (used_index == (u32) -1)
+            DA_ARENA_APPEND(checker->used_captured_vars,
+                            checker->captured_vars->items[var_index],
+                            checker->arena);
+          var = checker->captured_vars->items + var_index;
+        }
+      }
+
+      if (var_index == (u32) -1) {
+        CERRORF(expr, "Variable "STR_FMT" was not defined before usage\n",
+                STR_ARG(expr->as.set.name));
+        return NULL;
+      }
+    }
+
+    if (!var)
+      var = checker->vars.items + var_index;
+
     Type *type = check_expr(expr->as.set.value, checker, true);
     if (!type)
       return NULL;
 
-    u32 var_index = get_var_index(&checker->vars, checker->vars.len, expr->as.set.name);
-    if (var_index == (u32) -1) {
-      CERRORF(expr, "Variable "STR_FMT" was not defined before usage\n",
-              STR_ARG(expr->as.set.name));
-      return NULL;
-    }
-
-    Var *var = checker->vars.items + var_index;
     if (!type_narrow(expr, var->type, type, true))
       return NULL;
 
@@ -433,7 +447,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
   case ExprKindRet: {
     u32 var_index = checker->vars.len;
-    Var var = { {}, NULL, false };
+    Var var = { {}, NULL };
     DA_APPEND(checker->vars, var);
 
     Type *return_type;
@@ -481,7 +495,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     Var var = {
       {},
       cond_type,
-      false,
     };
     DA_APPEND(checker->vars, var);
 
@@ -537,7 +550,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
           Var var = {
             {},
             first_arg_type,
-            false,
           };
           DA_APPEND(checker->vars, var);
         }
@@ -550,7 +562,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
         Var var = {
           {},
           arg_type,
-          false,
         };
         DA_APPEND(checker->vars, var);
       }
@@ -572,7 +583,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
         continue;
 
       u32 part_var_index = checker->vars.len;
-      Var part_var = { {}, NULL, false };
+      Var part_var = { {}, NULL };
       DA_APPEND(checker->vars, part_var);
 
       Type *part_type = check_expr(part->expr, checker, true);
@@ -619,7 +630,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     Type *type = arena_alloc(checker->arena, sizeof(Type));
     type->kind = TypeKindInt;
 
-    Var var = { {}, type, false };
+    Var var = { {}, type };
 
     if (value_expected) {
       DA_APPEND(checker->vars, var);
@@ -651,10 +662,10 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     }
 
     if (value_expected && expr->as.list.elements.len > 0) {
-      Var var0 = { {}, result->element_type, false };
+      Var var0 = { {}, result->element_type };
       DA_APPEND(checker->vars, var0);
 
-      Var var1 = { {}, type, false };
+      Var var1 = { {}, type };
       DA_APPEND(checker->vars, var1);
     }
 
@@ -742,7 +753,6 @@ bool check_func(u32 index, Funcs *funcs, Arena *arena, u32 *lambda_counter) {
   Var ctx_var = {
     {},
     arena_alloc(arena, sizeof(Type)),
-    false,
   };
   ctx_var.type->kind = TypeKindInt;
   DA_APPEND(checker.vars, ctx_var);
@@ -751,7 +761,6 @@ bool check_func(u32 index, Funcs *funcs, Arena *arena, u32 *lambda_counter) {
     Var var = {
       func->expr->args.items[i],
       func->type->arg_types.items[i],
-      false,
     };
     DA_APPEND(checker.vars, var);
   }
@@ -767,7 +776,7 @@ bool check_func(u32 index, Funcs *funcs, Arena *arena, u32 *lambda_counter) {
     bool is_main = str_eq(func->expr->name, STR_LIT("main"));
 
     if (!is_last_ret && !is_main) {
-      Var var = { {}, checker.return_type, false };
+      Var var = { {}, checker.return_type };
       DA_APPEND(checker.vars, var);
     }
 
@@ -795,6 +804,10 @@ bool check_func(u32 index, Funcs *funcs, Arena *arena, u32 *lambda_counter) {
 
   func->vars = checker.vars;
   func->captured_vars = checker.used_captured_vars;
+
+  for (u32 i = func->captured_vars.len; i > 0; --i)
+    DA_INSERT(func->vars, 0, func->captured_vars.items[i - 1]);
+
   return true;
 }
 
@@ -844,7 +857,6 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
   Var var = {
     {},
     arena_alloc(arena, sizeof(Type)),
-    false,
   };
   var.type->kind = TypeKindInt;
   DA_APPEND(main_func->vars, var);

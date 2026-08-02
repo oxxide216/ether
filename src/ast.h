@@ -168,7 +168,6 @@ struct Expr {
 typedef struct {
   Str   name;
   Type *type;
-  bool  is_captured;
 } Var;
 
 typedef Da(Var) Vars;

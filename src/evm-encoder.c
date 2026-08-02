@@ -21,7 +21,6 @@ typedef struct {
   Instrs         instrs;
   Data           data;
   Vars          *vars;
-  Vars          *captured_vars;
   u32            vars_defined;
   BuiltInsToGen  built_ins_to_gen;
 } Encoder;
@@ -169,7 +168,6 @@ static void built_ins_to_gen_append_rec(Encoder *encoder, Str name,
     Var var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     *var.type = *element_type;
     DA_APPEND(*encoder->vars, var);
@@ -199,7 +197,6 @@ static void built_ins_to_gen_append_rec(Encoder *encoder, Str name,
     Var var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     *var.type = *element_type;
     DA_APPEND(*encoder->vars, var);
@@ -231,7 +228,7 @@ static void built_ins_to_gen_append_rec(Encoder *encoder, Str name,
       if (!type_is_free_generic(var_type))
         continue;
 
-      Var var = { {}, var_type, false };
+      Var var = { {}, var_type };
       DA_APPEND(*encoder->vars, var);
 
       StringBuilder sb = {0};
@@ -278,7 +275,6 @@ static void built_ins_to_gen_append_rec(Encoder *encoder, Str name,
     Var var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     *var.type = *element_type;
     DA_APPEND(*encoder->vars, var);
@@ -402,13 +398,13 @@ static void get_captured_var(Encoder *encoder, u32 var_index, u32 dest_index) {
 
   i32 offset = 8;
   for (u32 i = 0; i <= var_index; ++i) {
-    u32 size = get_type_size(encoder->captured_vars->items[i].type);
+    u32 size = get_type_size(encoder->vars->items[i].type);
     segments.items[i + 1].offset = offset;
     segments.items[i + 1].size = size;
     offset += size;
   }
 
-  Var *var = encoder->captured_vars->items + var_index;
+  Var *var = encoder->vars->items + var_index;
   ValueKind kind = get_type_value_kind(var->type);
   u32 size = get_type_size(var->type);
 
@@ -506,34 +502,27 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     u32 index = get_var_index(encoder->vars, encoder->vars_defined, expr->as.ident.name);
     if (index == (u32) -1) {
-      index = get_var_index(encoder->captured_vars,
-                            encoder->captured_vars->len,
-                            expr->as.ident.name);
-      if (index == (u32) -1) {
-        index = get_func_index(encoder->funcs, expr->as.ident.name);
-        Func *func = encoder->funcs->items + index;
-        Str name = func->expr->name;
-        if (!str_eq(name, STR_LIT("main")) && !func->is_lambda) {
-          Str temp_name = mangle_func_name(encoder->funcs->items + index);
-          name.len = temp_name.len;
-          name.ptr = arena_alloc(encoder->arena, name.len);
-          memcpy(name.ptr, temp_name.ptr, name.len);
-          free(temp_name.ptr);
-        }
-
-        Instr instr = {
-          InstrKindRefProc,
-          {
-            .ref_proc = {
-              dest_index,
-              name,
-            },
-          },
-        };
-        DA_APPEND(encoder->instrs, instr);
-      } else {
-        get_captured_var(encoder, index, dest_index);
+      index = get_func_index(encoder->funcs, expr->as.ident.name);
+      Func *func = encoder->funcs->items + index;
+      Str name = func->expr->name;
+      if (!str_eq(name, STR_LIT("main")) && !func->is_lambda) {
+        Str temp_name = mangle_func_name(encoder->funcs->items + index);
+        name.len = temp_name.len;
+        name.ptr = arena_alloc(encoder->arena, name.len);
+        memcpy(name.ptr, temp_name.ptr, name.len);
+        free(temp_name.ptr);
       }
+
+      Instr instr = {
+        InstrKindRefProc,
+        {
+          .ref_proc = {
+            dest_index,
+            name,
+          },
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
     } else {
       Instr instr = {
         InstrKindCopy,
@@ -685,44 +674,20 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       u32 index = get_var_index(encoder->vars, encoder->vars_defined,
                                 func->captured_vars.items[i].name);
 
-      if (index == (u32) -1) {
-        index = get_var_index(encoder->captured_vars,
-                              encoder->captured_vars->len,
-                              func->captured_vars.items[i].name);
+      try_gen_rc_inc(encoder, index);
 
-        u32 temp_index = define_var(encoder);
-        get_captured_var(encoder, index, temp_index);
-
-        instr = (Instr) {
-          InstrKindCopyToRefFixed,
-          {
-            .copy_to_ref_fixed = {
-              ctx_index,
-              segments,
-              temp_index,
-              true,
-            },
+      instr = (Instr) {
+        InstrKindCopyToRefFixed,
+        {
+          .copy_to_ref_fixed = {
+            ctx_index,
+            segments,
+            index,
+            true,
           },
-        };
-        DA_APPEND(encoder->instrs, instr);
-
-        try_gen_rc_inc(encoder, temp_index);
-      } else {
-        instr = (Instr) {
-          InstrKindCopyToRefFixed,
-          {
-            .copy_to_ref_fixed = {
-              ctx_index,
-              segments,
-              index,
-              true,
-            },
-          },
-        };
-        DA_APPEND(encoder->instrs, instr);
-
-        try_gen_rc_inc(encoder, index);
-      }
+        },
+      };
+      DA_APPEND(encoder->instrs, instr);
     }
 
     segments.len = 2;
@@ -940,10 +905,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
   case ExprKindSet: {
     u32 index = get_var_index(encoder->vars, encoder->vars_defined, expr->as.set.name);
+
     try_gen_rc_dec(encoder, index);
-
     encode_expr(encoder, expr->as.set.value, index);
-
     try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
@@ -1644,7 +1608,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var cond_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     cond_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, cond_var);
@@ -1653,7 +1616,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var zero_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     zero_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, zero_var);
@@ -1707,7 +1669,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var dest_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, dest_var);
     u32 dest_index = define_var(encoder);
@@ -1715,7 +1676,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var size_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     size_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, size_var);
@@ -1815,7 +1775,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var new_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, new_var);
     u32 new_index = define_var(encoder);
@@ -1823,7 +1782,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var temp_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, temp_var);
     u32 temp_index = define_var(encoder);
@@ -1842,7 +1800,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var cond_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     cond_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, cond_var);
@@ -1851,7 +1808,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var zero_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     zero_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, zero_var);
@@ -1986,7 +1942,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var size_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     size_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, size_var);
@@ -2124,7 +2079,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var ctx_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     ctx_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, ctx_var);
@@ -2158,7 +2112,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var refs_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     refs_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, refs_var);
@@ -2189,7 +2142,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var one_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     one_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, one_var);
@@ -2227,7 +2179,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var cond_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     cond_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, cond_var);
@@ -2236,7 +2187,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var zero_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     zero_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, zero_var);
@@ -2291,7 +2241,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       Var captured_var = {
         {},
         captured_vars->items[i].type,
-        false,
       };
       DA_APPEND(*encoder->vars, captured_var);
       u32 captured_index = define_var(encoder);
@@ -2333,7 +2282,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var size_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     size_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, size_var);
@@ -2407,7 +2355,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var cond_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     cond_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, cond_var);
@@ -2416,7 +2363,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var temp_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     temp_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, temp_var);
@@ -2466,7 +2412,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var one_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     one_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, one_var);
@@ -2527,7 +2472,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var zero_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     zero_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, zero_var);
@@ -2633,7 +2577,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var dest_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, dest_var);
     u32 dest_index = define_var(encoder);
@@ -2664,7 +2607,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var one_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     one_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, one_var);
@@ -2702,7 +2644,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var zero_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     zero_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, zero_var);
@@ -2727,7 +2668,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var cond_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, cond_var);
     u32 cond_index = define_var(encoder);
@@ -2814,7 +2754,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var element_var = {
       {},
       built_in->args.items[0]->type->element_type,
-      false,
     };
     DA_APPEND(*encoder->vars, element_var);
     u32 element_index = define_var(encoder);
@@ -2929,7 +2868,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var dest_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, dest_var);
     u32 dest_index = define_var(encoder);
@@ -2953,7 +2891,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var zero_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     zero_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, zero_var);
@@ -2978,7 +2915,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var one_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     one_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, one_var);
@@ -3003,7 +2939,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var char_var = {
       {},
       NULL,
-      false,
     };
     DA_APPEND(*encoder->vars, char_var);
     u32 char_index = encoder->vars_defined++;
@@ -3073,7 +3008,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var offset_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, offset_var);
     u32 offset_index = define_var(encoder);
@@ -3094,7 +3028,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var cond_var = {
       {},
       built_in->_return->type,
-      false,
     };
     DA_APPEND(*encoder->vars, cond_var);
     u32 cond_index = define_var(encoder);
@@ -3155,7 +3088,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var two_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
-      false,
     };
     two_var.type->kind = TypeKindInt;
     DA_APPEND(*encoder->vars, two_var);
@@ -3231,7 +3163,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var element_var = {
       {},
       built_in->args.items[2]->type->element_type,
-      false,
     };
     DA_APPEND(*encoder->vars, element_var);
     u32 element_index = define_var(encoder);
@@ -3439,7 +3370,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var next_var = {
       {},
       built_in->args.items[0]->type,
-      false,
     };
     DA_APPEND(*encoder->vars, next_var);
     u32 next_index = define_var(encoder);
@@ -3476,7 +3406,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       Var element_var = {
         {},
         element_type,
-        false,
       };
       DA_APPEND(*encoder->vars, element_var);
       u32 element_index = define_var(encoder);
@@ -3515,7 +3444,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     Var size_var = {
       {},
       built_in->args.items[0]->type,
-      false,
     };
     DA_APPEND(*encoder->vars, size_var);
     u32 size_index = define_var(encoder);
@@ -3585,9 +3513,11 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
 
     encoder.instrs = (Instrs) {0};
     encoder.vars = &func->vars;
-    encoder.captured_vars = &func->captured_vars;
     // + 1 is for context that contains captured values
-    encoder.vars_defined = func->expr->args.len + 1;
+    encoder.vars_defined = func->captured_vars.len + func->expr->args.len + 1;
+
+    for (u32 j = 0; j < func->captured_vars.len; ++j)
+      get_captured_var(&encoder, j, j);
 
     Exprs *body = &funcs->items[i].expr->body;
     bool is_result_zero_sized = get_type_size(func->type->return_type) == 0;
