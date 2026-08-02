@@ -23,7 +23,7 @@ cparen=\)
 ocurly=[
 ccurly=]
 str="
-fstr=f"
+fstr=i"
 unpack=...
 
 int=\-?0-9+

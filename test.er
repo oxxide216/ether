@@ -1,8 +1,8 @@
 (fun main ()
   (let c (counter))
-  (println f"{(c)}")
-  (println f"{(c)}")
-  (println f"{(c)}"))
+  (println i"{(c)}")
+  (println i"{(c)}")
+  (println i"{(c)}"))
 
 (fun counter ()
   (let count 0)
