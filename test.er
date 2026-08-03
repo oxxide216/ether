@@ -1,6 +1,4 @@
 (fun main ()
   (let xs [0 1 2 3])
-  (let f0 (fun (x) (+ x 1)))
-  (let p (fun (x) (= (% x 2) 0)))
-  (let f1 (fun (x y) (+ x y)))
-  (println i"{(fold f1 0 (filter p (map f0 xs)))}"))
+  (let r (fold + 0 (filter (= (% $0 2) 0) (map (+ $0 1) xs))))
+  (println i"{r}"))

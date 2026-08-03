@@ -78,6 +78,7 @@ static char *token_names[] = {
   "string literal",
   "formatted string literal",
   "`...`",
+  "`$`",
   "int",
   "float",
   "bool",
@@ -356,7 +357,7 @@ static void include_file(Strs *included_files, Str new_file) {
   DA_APPEND(*included_files, new_file);
 }
 
-static Expr     *parser_parse_expr(Parser *parser);
+static Expr     *parser_parse_expr(Parser *parser, bool is_in_bin_op);
 static Exprs     parser_parse_block(Parser *parser, u64 end_id_mask);
 static ExprFunc  parser_parse_func(Parser *parser);
 static void      parser_parse_macro_def(Parser *parser);
@@ -484,7 +485,7 @@ static Expr *parser_parse_local_expr(Str code, Str file_path,
   parser.include_paths = &include_paths;
   parser.arena = arena;
 
-  Expr *local_expr = parser_parse_expr(&parser);
+  Expr *local_expr = parser_parse_expr(&parser, false);
 
   if (parser.label_indices.items)
     free(parser.label_indices.items);
@@ -572,7 +573,7 @@ static ExprIf parser_parse_if(Parser *parser) {
   parser_next_token(parser);
 
   ExprIf result = {0};
-  result.cond = parser_parse_expr(parser);
+  result.cond = parser_parse_expr(parser, false);
   result.if_body = parser_parse_block(parser, MASK(TT_CPAREN) |
                                               MASK(TT_ELIF) |
                                               MASK(TT_ELSE));
@@ -587,7 +588,7 @@ static ExprIf parser_parse_if(Parser *parser) {
   while (next_token && next_token->id == TT_ELIF) {
     Expr *elif = arena_alloc(parser->arena, sizeof(Expr));
     elif->kind = ExprKindIf;
-    elif->as._if.cond = parser_parse_expr(parser);
+    elif->as._if.cond = parser_parse_expr(parser, false);
     elif->as._if.if_body = parser_parse_block(parser, MASK(TT_CPAREN) |
                                                MASK(TT_ELIF) |
                                                MASK(TT_ELSE));
@@ -614,7 +615,7 @@ static ExprIf parser_parse_if(Parser *parser) {
   return result;
 }
 
-Str get_file_dir(Str path) {
+static Str get_file_dir(Str path) {
   for (u32 i = path.len; i > 0; --i)
     if (path.ptr[i - 1] == '/')
       return (Str) { path.ptr, i };
@@ -622,13 +623,53 @@ Str get_file_dir(Str path) {
   return (Str) {0};
 }
 
-static Expr *parser_parse_expr(Parser *parser) {
+static ErBinOpKind token_id_to_bin_op_kind(u64 id) {
+  switch (id) {
+  case TT_PLUS:  return ErBinOpKindAdd;
+  case TT_MINUS: return ErBinOpKindSub;
+  case TT_STAR:  return ErBinOpKindMul;
+  case TT_SLASH: return ErBinOpKindDiv;
+  case TT_PERC:  return ErBinOpKindRem;
+  case TT_EQ:    return ErBinOpKindEq;
+  case TT_NE:    return ErBinOpKindNe;
+  case TT_LS:    return ErBinOpKindLs;
+  case TT_LE:    return ErBinOpKindLe;
+  case TT_GT:    return ErBinOpKindGt;
+  case TT_GE:    return ErBinOpKindGe;
+  }
+
+  return 0;
+}
+
+static void collect_lambda_arity(Exprs *args, u32 *arity) {
+  for (u32 i = 0; i < args->len; ++i) {
+    Expr *arg = args->items[i];
+    if (arg->kind == ExprKindIdent) {
+      if (arg->as.ident.name.ptr[0] == '$') {
+        u32 index = str_to_u32(STR(arg->as.ident.name.ptr + 1,
+                                   arg->as.ident.name.len - 1));
+        if (*arity <= index)
+          *arity = index + 1;
+      }
+    } else if (arg->kind == ExprKindBinOp) {
+      collect_lambda_arity(&arg->as.bin_op.args, arity);
+    }
+  }
+}
+
+static Expr *parser_parse_expr(Parser *parser, bool is_in_bin_op) {
   Expr *expr = arena_alloc(parser->arena, sizeof(Expr));
 
-  Token *first_token = parser_expect_token(parser, MASK(TT_OPAREN) | MASK(TT_STR) |
-                                                   MASK(TT_FSTR) | MASK(TT_IDENT) |
-                                                   MASK(TT_INT) |MASK(TT_BOOL) |
-                                                   MASK(TT_OCURLY));
+  Token *first_token = parser_expect_token(parser,
+                                           MASK(TT_OPAREN) | MASK(TT_STR) |
+                                           MASK(TT_FSTR) | MASK(TT_IDENT) |
+                                           MASK(TT_INT) | MASK(TT_BOOL) |
+                                           MASK(TT_OCURLY) | MASK(TT_PLUS) |
+                                           MASK(TT_MINUS) | MASK(TT_STAR) |
+                                           MASK(TT_SLASH) | MASK(TT_PERC) |
+                                           MASK(TT_EQ) | MASK(TT_NE) |
+                                           MASK(TT_LS) | MASK(TT_LE) |
+                                           MASK(TT_GT) | MASK(TT_GE));
 
   expr->loc.file_path = parser->file_path;
   expr->loc.row = first_token->row;
@@ -778,13 +819,53 @@ static Expr *parser_parse_expr(Parser *parser) {
 
     Token *token = parser_peek_token(parser);
     while (token && token->id != TT_CCURLY) {
-      Expr *temp_expr = parser_parse_expr(parser);
+      Expr *temp_expr = parser_parse_expr(parser, false);
       DA_ARENA_APPEND(expr->as.list.elements, temp_expr, parser->arena);
 
       token = parser_peek_token(parser);
     }
 
     parser_expect_token(parser, MASK(TT_CCURLY));
+  } break;
+
+  case TT_PLUS:
+  case TT_MINUS:
+  case TT_STAR:
+  case TT_SLASH:
+  case TT_PERC:
+  case TT_EQ:
+  case TT_NE:
+  case TT_LS:
+  case TT_LE:
+  case TT_GT:
+  case TT_GE: {
+    expr->kind = ExprKindFunc;
+    expr->as.func.args.len = 2;
+    expr->as.func.args.cap = expr->as.func.args.len;
+    expr->as.func.args.items =
+      arena_alloc(parser->arena, expr->as.func.args.cap * sizeof(Str));
+    expr->as.func.args.items[0] = STR_LIT("$0");
+    expr->as.func.args.items[1] = STR_LIT("$1");
+
+    Expr *bin_op = arena_alloc(parser->arena, sizeof(Expr));
+    bin_op->kind = ExprKindBinOp;
+    bin_op->as.bin_op.kind = token_id_to_bin_op_kind(first_token->id);
+    bin_op->as.bin_op.args.len = 2;
+    bin_op->as.bin_op.args.cap = bin_op->as.bin_op.args.len;
+    bin_op->as.bin_op.args.items =
+      arena_alloc(parser->arena, bin_op->as.bin_op.args.cap * sizeof(Expr *));
+    bin_op->as.bin_op.args.items[0] = arena_alloc(parser->arena, sizeof(Expr));
+    bin_op->as.bin_op.args.items[0]->kind = ExprKindIdent;
+    bin_op->as.bin_op.args.items[0]->as.ident.name = STR_LIT("$0");
+    bin_op->as.bin_op.args.items[1] = arena_alloc(parser->arena, sizeof(Expr));
+    bin_op->as.bin_op.args.items[1]->kind = ExprKindIdent;
+    bin_op->as.bin_op.args.items[1]->as.ident.name = STR_LIT("$1");
+
+    expr->as.func.body.len = 1;
+    expr->as.func.body.cap = expr->as.func.body.len;
+    expr->as.func.body.items =
+      arena_alloc(parser->arena, expr->as.func.body.cap * sizeof(Expr *));
+    expr->as.func.body.items[0] = bin_op;
   } break;
 
   default: {
@@ -810,7 +891,7 @@ static Expr *parser_parse_expr(Parser *parser) {
 
       expr->kind = ExprKindLet;
       expr->as.let.name = name_token->lexeme;
-      expr->as.let.value = parser_parse_expr(parser);
+      expr->as.let.value = parser_parse_expr(parser, false);
 
       parser_expect_token(parser, MASK(TT_CPAREN));
     } break;
@@ -834,30 +915,77 @@ static Expr *parser_parse_expr(Parser *parser) {
       parser_next_token(parser);
 
       expr->kind = ExprKindBinOp;
+      expr->as.bin_op.kind = token_id_to_bin_op_kind(token->id);
 
-      switch (token->id) {
-      case TT_PLUS:  expr->as.bin_op.kind = ErBinOpKindAdd; break;
-      case TT_MINUS: expr->as.bin_op.kind = ErBinOpKindSub; break;
-      case TT_STAR:  expr->as.bin_op.kind = ErBinOpKindMul; break;
-      case TT_SLASH: expr->as.bin_op.kind = ErBinOpKindDiv; break;
-      case TT_PERC:  expr->as.bin_op.kind = ErBinOpKindRem; break;
-      case TT_EQ:    expr->as.bin_op.kind = ErBinOpKindEq; break;
-      case TT_NE:    expr->as.bin_op.kind = ErBinOpKindNe; break;
-      case TT_LS:    expr->as.bin_op.kind = ErBinOpKindLs; break;
-      case TT_LE:    expr->as.bin_op.kind = ErBinOpKindLe; break;
-      case TT_GT:    expr->as.bin_op.kind = ErBinOpKindGt; break;
-      case TT_GE:    expr->as.bin_op.kind = ErBinOpKindGe; break;
-      }
+      u32 lambda_arity = 0;
 
       Token *token = parser_peek_token(parser);
       while (token && token->id != TT_CPAREN) {
-        Expr *temp_expr = parser_parse_expr(parser);
-        DA_ARENA_APPEND(expr->as.bin_op.args, temp_expr, parser->arena);
+        token = parser_peek_token(parser);
+        if (token->id == TT_DOLLAR) {
+          parser_next_token(parser);
+          token = parser_expect_token(parser, MASK(TT_INT));
+
+          u32 index = str_to_u32(token->lexeme);
+          if (lambda_arity <= index)
+            lambda_arity = index + 1;
+
+          Expr *temp_expr = arena_alloc(parser->arena, sizeof(Expr));
+          temp_expr->kind = ExprKindIdent;
+
+          StringBuilder sb = {0};
+          sb_push_char(&sb, '$');
+          sb_push_str(&sb, token->lexeme);
+          temp_expr->as.ident.name.len = sb.len;
+          temp_expr->as.ident.name.ptr =
+            arena_alloc(parser->arena, temp_expr->as.ident.name.len);
+          memcpy(temp_expr->as.ident.name.ptr, sb.buffer, sb.len);
+          free(sb.buffer);
+
+          DA_ARENA_APPEND(expr->as.bin_op.args, temp_expr, parser->arena);
+        } else {
+          Expr *temp_expr = parser_parse_expr(parser, true);
+
+          if (!is_in_bin_op && temp_expr->kind == ExprKindBinOp)
+            collect_lambda_arity(&temp_expr->as.bin_op.args, &lambda_arity);
+
+          DA_ARENA_APPEND(expr->as.bin_op.args, temp_expr, parser->arena);
+        }
 
         token = parser_peek_token(parser);
       }
 
       parser_expect_token(parser, MASK(TT_CPAREN));
+
+      if (lambda_arity > 0 && !is_in_bin_op) {
+        StringBuilder sb = {0};
+
+        Expr *temp_expr = arena_alloc(parser->arena, sizeof(Expr));
+        temp_expr->kind = ExprKindFunc;
+
+        for (u32 i = 0; i < lambda_arity; ++i) {
+          sb_push_char(&sb, '$');
+          sb_push_u32(&sb, i);
+
+          Str arg;
+          arg.len = sb.len;
+          arg.ptr = arena_alloc(parser->arena, arg.len);
+          memcpy(arg.ptr, sb.buffer, sb.len);
+
+          DA_ARENA_APPEND(temp_expr->as.func.args, arg, parser->arena);
+
+          sb.len = 0;
+        }
+
+        temp_expr->as.func.body.len = 1;
+        temp_expr->as.func.body.cap = temp_expr->as.func.body.len;
+        temp_expr->as.func.body.items =
+          arena_alloc(parser->arena, temp_expr->as.func.body.cap * sizeof(Expr *));
+        temp_expr->as.func.body.items[0] = expr;
+        expr = temp_expr;
+
+        free(sb.buffer);
+      }
     } break;
 
     case TT_MACRO: {
@@ -929,7 +1057,7 @@ static Expr *parser_parse_expr(Parser *parser) {
 
       expr->kind = ExprKindSet;
       expr->as.set.name = parser_next_token(parser)->lexeme;
-      expr->as.set.value = parser_parse_expr(parser);
+      expr->as.set.value = parser_parse_expr(parser, false);
 
       parser_expect_token(parser, MASK(TT_CPAREN));
     } break;
@@ -941,7 +1069,7 @@ static Expr *parser_parse_expr(Parser *parser) {
 
       token = parser_peek_token(parser);
       if (token && token->id != TT_CPAREN)
-        expr->as.ret.value = parser_parse_expr(parser);
+        expr->as.ret.value = parser_parse_expr(parser, false);
 
       parser_expect_token(parser, MASK(TT_CPAREN));
     } break;
@@ -957,17 +1085,9 @@ static Expr *parser_parse_expr(Parser *parser) {
 
     default: {
       expr->kind = ExprKindFuncCall;
-      expr->as.func_call.func = parser_parse_expr(parser);
+      expr->as.func_call.func = parser_parse_expr(parser, false);
       expr->as.func_call.built_in = NULL;
-
-      Token *token = parser_peek_token(parser);
-      while (token && token->id != TT_CPAREN) {
-        Expr *temp_expr = parser_parse_expr(parser);
-        DA_ARENA_APPEND(expr->as.func_call.args, temp_expr, parser->arena);
-
-        token = parser_peek_token(parser);
-      }
-
+      expr->as.func_call.args = parser_parse_block(parser, MASK(TT_CPAREN));
       parser_expect_token(parser, MASK(TT_CPAREN));
     } break;
     }
@@ -981,7 +1101,7 @@ static Exprs parser_parse_block(Parser *parser, u64 end_id_mask) {
 
   Token *token = parser_peek_token(parser);
   while (token && !(MASK(token->id) & end_id_mask)) {
-    Expr *expr = parser_parse_expr(parser);
+    Expr *expr = parser_parse_expr(parser, false);
     DA_ARENA_APPEND(result, expr, parser->arena);
 
     token = parser_peek_token(parser);

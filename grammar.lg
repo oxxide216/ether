@@ -31,6 +31,7 @@ ccurly=]
 str="
 fstr=i"
 unpack=...
+dollar=$
 
 int=\-?0-9+
 float=\-?0-9+.0-9+
