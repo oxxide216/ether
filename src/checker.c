@@ -38,7 +38,11 @@ Str get_type_str(Type *type) {
 
   case TypeKindFunc: {
     StringBuilder sb = {0};
-    sb_push_char(&sb, '(');
+    sb_push(&sb, "(fun ");
+    Str return_type_str = get_type_str(type->return_type);
+    sb_push_str(&sb, return_type_str);
+    free_type_str(return_type_str, type->return_type);
+    sb_push_char(&sb, ' ');
     for (u32 i = 0; i < type->arg_types.len; ++i) {
       if (i > 0)
         sb_push_char(&sb, ' ');
@@ -46,10 +50,7 @@ Str get_type_str(Type *type) {
       sb_push_str(&sb, arg_type_str);
       free_type_str(arg_type_str, type->arg_types.items[i]);
     }
-    sb_push(&sb, ") -> ");
-    Str return_type_str = get_type_str(type->return_type);
-    sb_push_str(&sb, return_type_str);
-    free_type_str(return_type_str, type->return_type);
+    sb_push_char(&sb, ')');
     return sb_to_str(sb);
   }
 
