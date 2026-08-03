@@ -67,6 +67,12 @@ static char *token_names[] = {
   "`*`",
   "`/`",
   "`%`",
+  "`=`",
+  "`!=`",
+  "`<`",
+  "`<=`",
+  "`>`",
+  "`>=`",
   "`(`",
   "`)`",
   "string literal",
@@ -603,15 +609,6 @@ static ExprIf parser_parse_if(Parser *parser) {
     last->else_body = parser_parse_block(parser, MASK(TT_CPAREN));
 
     parser_expect_token(parser, MASK(TT_CPAREN));
-  } else {
-    last->else_body.len = 1;
-    last->else_body.items = arena_alloc(parser->arena, sizeof(Expr *));
-    last->else_body.items[0] = arena_alloc(parser->arena, sizeof(Expr));
-    last->else_body.items[0]->kind = ExprKindIdent;
-    last->else_body.items[0]->as.ident.name = STR_LIT("unit");
-    last->else_body.items[0]->loc.file_path = parser->file_path;
-    last->else_body.items[0]->loc.row = first_token->row;
-    last->else_body.items[0]->loc.col = first_token->col;
   }
 
   return result;
@@ -827,7 +824,13 @@ static Expr *parser_parse_expr(Parser *parser) {
     case TT_MINUS:
     case TT_STAR:
     case TT_SLASH:
-    case TT_PERC: {
+    case TT_PERC:
+    case TT_EQ:
+    case TT_NE:
+    case TT_LS:
+    case TT_LE:
+    case TT_GT:
+    case TT_GE: {
       parser_next_token(parser);
 
       expr->kind = ExprKindBinOp;
@@ -838,6 +841,12 @@ static Expr *parser_parse_expr(Parser *parser) {
       case TT_STAR:  expr->as.bin_op.kind = ErBinOpKindMul; break;
       case TT_SLASH: expr->as.bin_op.kind = ErBinOpKindDiv; break;
       case TT_PERC:  expr->as.bin_op.kind = ErBinOpKindRem; break;
+      case TT_EQ:    expr->as.bin_op.kind = ErBinOpKindEq; break;
+      case TT_NE:    expr->as.bin_op.kind = ErBinOpKindNe; break;
+      case TT_LS:    expr->as.bin_op.kind = ErBinOpKindLs; break;
+      case TT_LE:    expr->as.bin_op.kind = ErBinOpKindLe; break;
+      case TT_GT:    expr->as.bin_op.kind = ErBinOpKindGt; break;
+      case TT_GE:    expr->as.bin_op.kind = ErBinOpKindGe; break;
       }
 
       Token *token = parser_peek_token(parser);

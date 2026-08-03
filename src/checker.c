@@ -73,7 +73,7 @@ Str get_type_str(Type *type) {
   return (Str) {0};
 }
 
-bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
+bool type_narrow(Expr *expr, Type *a, Type *b, Arena *arena, bool log_error) {
   if (!type_eq(a, b)) {
     if (log_error) {
       Str a_str = get_type_str(a);
@@ -91,7 +91,7 @@ bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
   } else if (b->kind == TypeKindAny) {
     *b = *a;
   } else if (a->kind == TypeKindFunc) {
-    if (!type_narrow(expr, a->return_type, b->return_type, log_error))
+    if (!type_narrow(expr, a->return_type, b->return_type, arena, log_error))
       return false;
 
     if (a->arg_types.len != b->arg_types.len) {
@@ -107,10 +107,10 @@ bool type_narrow(Expr *expr, Type *a, Type *b, bool log_error) {
     }
 
     for (u32 i = 0; i < a->arg_types.len; ++i)
-      if (!type_narrow(expr, a->arg_types.items[i], b->arg_types.items[i], log_error))
+      if (!type_narrow(expr, a->arg_types.items[i], b->arg_types.items[i], arena, log_error))
         return false;
   } else if (a->kind == TypeKindList) {
-    return type_narrow(expr, a->element_type, b->element_type, log_error);
+    return type_narrow(expr, a->element_type, b->element_type, arena, log_error);
   }
 
   return true;
@@ -306,9 +306,9 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     bool updated_func = false;
     Exprs *args = &expr->as.func_call.args;
     Types arg_types = {0};
-    u32 vars_start = checker->vars.len;
 
     for (u32 i = 0; i < args->len; ++i) {
+      u32 arg_var_index = checker->vars.len;
       Var var = { {}, NULL };
       DA_APPEND(checker->vars, var);
 
@@ -318,6 +318,8 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
           free(arg_types.items);
         return NULL;
       }
+
+      checker->vars.items[arg_var_index].type = arg_type;
 
       DA_APPEND(arg_types, arg_type);
     }
@@ -330,22 +332,21 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
       for (u32 i = 0; i < args->len; ++i) {
         if (!type_narrow(args->items[i], arg_types.items[i],
-                         func_type->arg_types.items[i], false)) {
+                         func_type->arg_types.items[i],
+                         checker->arena, false)) {
           Str a_str = get_type_str(arg_types.items[i]);
           Str b_str = get_type_str(func_type->arg_types.items[i]);
           CERRORF(args->items[i], "Cannot pass value of type "STR_FMT" as an argument of type "STR_FMT"\n",
                   STR_ARG(a_str), STR_ARG(b_str));
           if (str_eq(func_type->built_in->name, STR_LIT("print")) ||
               str_eq(func_type->built_in->name, STR_LIT("println"))) {
-            INFO("If you want to print this value, try using string interpolation instead: f\"{value}\"\n");
+            INFO("If you want to print this value, try using string interpolation instead: i\"{value}\"\n");
           }
           free_type_str(a_str, arg_types.items[i]);
           free_type_str(b_str, func_type->arg_types.items[i]);
           free(arg_types.items);
           return NULL;
         }
-
-        checker->vars.items[vars_start + i].type = arg_types.items[i];
       }
 
       if (arg_types.items)
@@ -357,7 +358,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
     for (u32 i = 0; i < args->len; ++i) {
       if (!type_narrow(args->items[i], func_type->arg_types.items[i],
-                       arg_types.items[i], false)) {
+                       arg_types.items[i], checker->arena, false)) {
         Func *func = checker->funcs->items + func_type->func_index;
         u32 index = get_func_index_with_signature(checker->funcs,
                                                   func->expr->name,
@@ -370,17 +371,12 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
         updated_func = true;
         break;
       }
-
-      checker->vars.items[vars_start + i].type = arg_types.items[i];
     }
 
-    if (updated_func) {
-      for (u32 i = 0; i < args->len; ++i) {
+    if (updated_func)
+      for (u32 i = 0; i < args->len; ++i)
         type_narrow(args->items[i], func_type->arg_types.items[i],
-                    arg_types.items[i], false);
-        checker->vars.items[vars_start + i].type = arg_types.items[i];
-      }
-    }
+                    arg_types.items[i], checker->arena, false);
 
     if (arg_types.items)
       free(arg_types.items);
@@ -439,7 +435,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
     if (!type)
       return NULL;
 
-    if (!type_narrow(expr, var->type, type, true))
+    if (!type_narrow(expr, var->type, type, checker->arena, true))
       return NULL;
 
     return type;
@@ -462,7 +458,8 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
     checker->vars.items[var_index].type = return_type;
 
-    if (!type_narrow(expr->as.ret.value, checker->return_type, return_type, false)) {
+    if (!type_narrow(expr->as.ret.value, checker->return_type,
+                     return_type, checker->arena, false)) {
       Str a_str = get_type_str(return_type);
       Str b_str = get_type_str(checker->return_type);
       CERRORF(expr->as.ret.value,
@@ -479,9 +476,15 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   } break;
 
   case ExprKindIf: {
+    u32 cond_index = checker->vars.len;
+    Var cond_var = { {}, NULL };
+    DA_APPEND(checker->vars, cond_var);
+
     Type *cond_type = check_expr(expr->as._if.cond, checker, true);
     if (!cond_type)
       return NULL;
+
+    checker->vars.items[cond_index].type = cond_type;
 
     Type type = { TypeKindBool, {} };
     if (!type_eq(cond_type, &type)) {
@@ -491,12 +494,6 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       free_type_str(cond_type_str, cond_type);
       return NULL;
     }
-
-    Var var = {
-      {},
-      cond_type,
-    };
-    DA_APPEND(checker->vars, var);
 
     Type *if_type = check_block(&expr->as._if.if_body, checker, value_expected);
     if (!if_type)
@@ -543,10 +540,11 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
 
       if (i == 0) {
         first_arg_type = arg_type;
-        if (!type_narrow(expr->as.bin_op.args.items[i], arg_type, &type, true))
+        if (!type_narrow(expr->as.bin_op.args.items[i], arg_type,
+                         &type, checker->arena, true))
           return NULL;
 
-        if (expr->as.bin_op.args.len > 2 && value_expected) {
+        if (value_expected && expr->as.bin_op.args.len > 2) {
           Var var = {
             {},
             first_arg_type,
@@ -554,7 +552,8 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
           DA_APPEND(checker->vars, var);
         }
       } else {
-        if (!type_narrow(expr->as.bin_op.args.items[i], arg_type, first_arg_type, true))
+        if (!type_narrow(expr->as.bin_op.args.items[i], arg_type,
+                         first_arg_type, checker->arena, true))
           return NULL;
       }
 
@@ -829,7 +828,7 @@ bool check(Exprs *block, Funcs *funcs, Arena *arena) {
     ERROR("`main` function was not defined\n");
     INFO("Try defining it like this:\n");
     printf("  (fun main()\n");
-    printf("    (println 'Hello, World!'))\n");
+    printf("    (println \"Hello, World!\"))\n");
     return false;
   }
 

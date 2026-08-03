@@ -12,6 +12,7 @@
 #define YASM_PREFIX "yasm -felf64 -o "
 #define LD_PREFIX   "ld -o "
 #define RUNTIME     " build/runtime.o"
+#define STD         "std.er"
 
 typedef struct {
   char *input_path;
@@ -179,23 +180,46 @@ static void cached_asts_destroy(CachedASTs *asts) {
 
 i32 main(i32 argc, char **argv) {
   Config config = config_create(argc, argv);
+  CachedASTs cached_asts = {0};
+  Macros macros = {0};
+  Arena arena = {0};
+
+  Str std_code = read_file(STD);
+  Exprs std_ast = parse(std_code, STR_LIT(STD), &config.include_paths,
+                        &cached_asts, &macros, &arena);
+  expand_macros_block(&std_ast, &macros, NULL, NULL,
+                      false, &arena, STR_LIT(STD),
+                      0, 0, false);
 
   Str code = read_file(config.input_path);
   if (code.len == (u32) -1) {
     ERROR("Could not read %s\n", config.input_path);
+    arena_free(&arena);
+    if (macros.items)
+      free(macros.items);
+    cached_asts_destroy(&cached_asts);
     config_destroy(&config);
     return 1;
   }
 
   Str input_path_str = str_new(config.input_path);
-  CachedASTs cached_asts = {0};
-  Macros macros = {0};
-  Arena arena = {0};
   Exprs ast = parse(code, input_path_str, &config.include_paths,
                     &cached_asts, &macros, &arena);
   expand_macros_block(&ast, &macros, NULL, NULL,
                       false, &arena, input_path_str,
                       0, 0, false);
+
+  if (ast.cap < std_ast.len + ast.len) {
+    ast.cap = std_ast.len + ast.len;
+    Expr **new_items = arena_alloc(&arena, ast.cap * sizeof(Expr *));
+    memcpy(new_items, std_ast.items, std_ast.len * sizeof(Expr *));
+    memcpy(new_items + std_ast.len, ast.items, ast.len * sizeof(Expr *));
+    ast.items = new_items;
+  } else {
+    memmove(ast.items + std_ast.len, ast.items, ast.len * sizeof(Expr *));
+    memcpy(ast.items, std_ast.items, std_ast.len * sizeof(Expr *));
+  }
+  ast.len += std_ast.len;
 
   Funcs funcs = {0};
   if (!check(&ast, &funcs, &arena)) {

@@ -58,6 +58,14 @@ println:
 
   ret
 
+global is_empty
+is_empty:
+  mov rax, 0
+  cmp rdi, 0
+  mov rsi, 1
+  cmove rax, rsi
+  ret
+
 len_internal:
   cmp rdi, 0
   jne .skip_null
@@ -73,6 +81,14 @@ global len
 len:
   mov rsi, 0
   jmp len_internal
+
+global $not
+$not:
+  mov rax, rdi
+  not rax
+  ret
+
+; Following built-ins are internal (cannot be used by Ether programmer directly)
 
 global ether_get_value_len_as_str_2 ; int
 ether_get_value_len_as_str_2:
@@ -187,7 +203,10 @@ ether_free_4:; str
 
 global ether_rc_inc_1 ; func
 ether_rc_inc_1:
+  cmp rsi, 0
+  je .skip_null
   inc qword [rsi-8]
+.skip_null:
 
   ret
 

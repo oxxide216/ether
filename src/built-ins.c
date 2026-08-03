@@ -27,12 +27,38 @@ Type *app_get_return_type(BuiltIn *built_in, Types *arg_types, Arena *arena) {
   return result;
 }
 
+Type *head_get_return_type(BuiltIn *built_in, Types *arg_types, Arena *arena) {
+  (void) built_in;
+  (void) arena;
+
+  return arg_types->items[0]->element_type;
+}
+
+Type *tail_get_return_type(BuiltIn *built_in, Types *arg_types, Arena *arena) {
+  (void) built_in;
+  (void) arena;
+
+  return arg_types->items[0];
+}
+
 Type **default_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
   (void) arg_types;
 
   Type **result = arena_alloc(arena, built_in->args_len * sizeof(Type *));
   for (u32 i = 0; i < built_in->args_len; ++i)
     result[i] = built_in->arg_types + i;
+  return result;
+}
+
+Type **is_empty_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
+  (void) built_in;
+  (void) arg_types;
+
+  Type **result = arena_alloc(arena, sizeof(Type *));
+  result[0] = arena_alloc(arena, sizeof(Type));
+  result[0]->kind = TypeKindList;
+  result[0]->element_type = arena_alloc(arena, sizeof(Type));
+  result[0]->element_type->kind = TypeKindAny;
   return result;
 }
 
@@ -58,12 +84,30 @@ Type **app_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
   return result;
 }
 
+Type **head_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
+  (void) built_in;
+  (void) arena;
+
+  return arg_types->items;
+}
+
+Type **tail_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
+  (void) built_in;
+  (void) arena;
+
+  return arg_types->items;
+}
+
 BuiltIn built_ins[] = {
   { false, STR_LIT("print"), TYPE(TypeKindUnit), 1, { TYPE(TypeKindStr) }, default_get_return_type, default_get_arg_types },
   { false, STR_LIT("println"), TYPE(TypeKindUnit), 1, { TYPE(TypeKindStr) }, default_get_return_type, default_get_arg_types },
-  { false, STR_LIT("len"), TYPE(TypeKindInt), 1, { TYPE(TypeKindList) }, default_get_return_type, default_get_arg_types },
+  { false, STR_LIT("is_empty"), TYPE(TypeKindBool), 1, { TYPE(TypeKindList) }, default_get_return_type, is_empty_get_arg_types },
+  { false, STR_LIT("len"), TYPE(TypeKindInt), 1, { TYPE(TypeKindList) }, default_get_return_type, is_empty_get_arg_types },
   { false, STR_LIT("prep"), TYPE(TypeKindList), 2, { TYPE(TypeKindAny), TYPE(TypeKindList) }, prep_get_return_type, prep_get_arg_types },
   { false, STR_LIT("app"), TYPE(TypeKindList), 2, { TYPE(TypeKindList), TYPE(TypeKindAny) }, app_get_return_type, app_get_arg_types },
+  { false, STR_LIT("head"), TYPE(TypeKindAny), 1, { TYPE(TypeKindList) }, head_get_return_type, head_get_arg_types },
+  { false, STR_LIT("tail"), TYPE(TypeKindList), 1, { TYPE(TypeKindList) }, tail_get_return_type, tail_get_arg_types },
+  { false, STR_LIT("not"), TYPE(TypeKindBool), 1, { TYPE(TypeKindBool) }, default_get_return_type, default_get_arg_types },
   // Internal
   { true, STR_LIT("ether_get_value_len_as_str_2"), TYPE(TypeKindInt), 1, { TYPE(TypeKindInt) }, NULL, NULL },
   { true, STR_LIT("ether_get_value_len_as_str_3"), TYPE(TypeKindInt), 1, { TYPE(TypeKindBool) }, NULL, NULL },

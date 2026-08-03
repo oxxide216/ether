@@ -743,7 +743,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       }
 
       is_built_in_to_gen = str_eq(name, STR_LIT("prep")) ||
-                           str_eq(name, STR_LIT("app"));
+                           str_eq(name, STR_LIT("app")) ||
+                           str_eq(name, STR_LIT("head")) ||
+                           str_eq(name, STR_LIT("tail"));
     }
 
     bool is_closure = !expr->as.func_call.built_in;
@@ -794,7 +796,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     for (u32 i = 0; i < expr->as.func_call.args.len; ++i) {
       u32 arg_index = define_var(encoder);
       encode_expr(encoder, expr->as.func_call.args.items[i], arg_index);
-      if (!is_built_in_to_gen)
+      if (!expr->as.func_call.built_in &&
+          expr->as.func_call.args.items[i]->kind != ExprKindFuncCall)
         try_gen_rc_inc(encoder, arg_index);
       arg_indices.items[i + is_closure] = arg_index;
     }
@@ -878,7 +881,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     }
     DA_APPEND(encoder->instrs, instr);
 
-    if (!is_built_in_to_gen)
+    if (!expr->as.func_call.built_in)
       for (u32 i = expr->as.func_call.args.len; i > 0; --i)
         try_gen_rc_dec(encoder, arg_indices.items[i - 1]);
   } break;
@@ -887,7 +890,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     u32 index = define_var(encoder);
     encode_expr(encoder, expr->as.let.value, index);
 
-    try_gen_rc_inc(encoder, index);
+    if (expr->as.let.value->kind != ExprKindFuncCall)
+      try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
       Instr instr = {
@@ -908,7 +912,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     try_gen_rc_dec(encoder, index);
     encode_expr(encoder, expr->as.set.value, index);
-    try_gen_rc_inc(encoder, index);
+    if (expr->as.set.value->kind != ExprKindFuncCall)
+      try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
       Instr instr = {
@@ -928,6 +933,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     if (expr->as.ret.value) {
       u32 index = define_var(encoder);
       encode_expr(encoder, expr->as.ret.value, index);
+      try_gen_rc_inc(encoder, index);
 
       Instr instr = {
         InstrKindRetVal,
@@ -1008,8 +1014,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     DA_APPEND(encoder->instrs, instr);
 
     for (u32 i = 2; i < expr->as.bin_op.args.len; ++i) {
-      u32 index = define_var(encoder);
-      encode_expr(encoder, expr->as.bin_op.args.items[i], index);
+      encode_expr(encoder, expr->as.bin_op.args.items[i], index0);
 
       Instr instr = {
         InstrKindBinOp,
@@ -1017,7 +1022,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           .bin_op = {
             temp_dest_index,
             temp_dest_index,
-            index,
+            index0,
             kind,
           },
         },
@@ -1605,6 +1610,8 @@ static void encode_instr(FILE *stream, Instr *instr) {
 
 static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
   if (begins_with(built_in->name, STR_LIT("prep"))) {
+    try_gen_rc_inc(encoder, 0);
+
     Var cond_var = {
       {},
       arena_alloc(encoder->arena, sizeof(Type)),
@@ -1772,6 +1779,8 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
   } else if (begins_with(built_in->name, STR_LIT("app"))) {
+    try_gen_rc_inc(encoder, 1);
+
     Var new_var = {
       {},
       built_in->_return->type,
@@ -3487,6 +3496,196 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       },
     };
     DA_APPEND(encoder->instrs, instr);
+  } else if (begins_with(built_in->name, STR_LIT("head_5"))) {
+    Var cond_var = {
+      {},
+      built_in->_return->type,
+    };
+    DA_APPEND(*encoder->vars, cond_var);
+    u32 cond_index = define_var(encoder);
+
+    Var zero_var = {
+      {},
+      arena_alloc(encoder->arena, sizeof(Type)),
+    };
+    zero_var.type->kind = TypeKindInt;
+    DA_APPEND(*encoder->vars, zero_var);
+    u32 zero_index = define_var(encoder);
+
+    Instr instr = {
+      InstrKindBinOp,
+      {
+        .bin_op = {
+          cond_index,
+          0,
+          zero_index,
+          BinOpKindEqInt,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 jump_instr_index = encoder->instrs.len;
+    instr = (Instr) {
+      InstrKindJumpIfNot,
+      {
+        .jump_if_not = {
+          cond_index,
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindRetVal,
+      {
+        .ret_val = {
+          zero_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    encoder->instrs.items[jump_instr_index].as.jump_if_not.target = encoder->instrs.len;
+
+    Var dest_var = {
+      {},
+      built_in->_return->type,
+    };
+    DA_APPEND(*encoder->vars, dest_var);
+    u32 dest_index = define_var(encoder);
+
+    Type *element_type = built_in->args.items[0]->type->element_type;
+    ValueKind element_kind = get_type_value_kind(element_type);
+    u32 element_size = get_type_size(element_type);
+
+    Segments segments;
+    segments.len = 2;
+    segments.cap = segments.len;
+    segments.items = arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+    segments.items[1].offset = 8;
+    segments.items[1].size = element_size;
+
+    instr = (Instr) {
+      InstrKindCopyFromRefFixed,
+      {
+        .copy_from_ref_fixed = {
+          dest_index,
+          0,
+          segments,
+          element_kind,
+          element_size,
+          true,
+          false,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindRetVal,
+      {
+        .ret_val = {
+          dest_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+  } else if (begins_with(built_in->name, STR_LIT("tail_5"))) {
+    Var cond_var = {
+      {},
+      built_in->_return->type,
+    };
+    DA_APPEND(*encoder->vars, cond_var);
+    u32 cond_index = define_var(encoder);
+
+    Var zero_var = {
+      {},
+      arena_alloc(encoder->arena, sizeof(Type)),
+    };
+    zero_var.type->kind = TypeKindInt;
+    DA_APPEND(*encoder->vars, zero_var);
+    u32 zero_index = define_var(encoder);
+
+    Instr instr = {
+      InstrKindBinOp,
+      {
+        .bin_op = {
+          cond_index,
+          0,
+          zero_index,
+          BinOpKindEqInt,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    u32 jump_instr_index = encoder->instrs.len;
+    instr = (Instr) {
+      InstrKindJumpIfNot,
+      {
+        .jump_if_not = {
+          cond_index,
+          0,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindRetVal,
+      {
+        .ret_val = {
+          zero_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    encoder->instrs.items[jump_instr_index].as.jump_if_not.target = encoder->instrs.len;
+
+    Var dest_var = {
+      {},
+      built_in->_return->type,
+    };
+    DA_APPEND(*encoder->vars, dest_var);
+    u32 dest_index = define_var(encoder);
+
+    Segments segments;
+    segments.len = 1;
+    segments.cap = segments.len;
+    segments.items = arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
+    segments.items[0].offset = 0;
+    segments.items[0].size = 8;
+
+    instr = (Instr) {
+      InstrKindCopyFromRefFixed,
+      {
+        .copy_from_ref_fixed = {
+          dest_index,
+          0,
+          segments,
+          ValueKindUnsigned,
+          8,
+          true,
+          false,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
+      InstrKindRetVal,
+      {
+        .ret_val = {
+          dest_index,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
   } else {
     ERROR("Cannot generate built-in "STR_FMT"\n", STR_ARG(built_in->name));
     exit(1);
@@ -3530,6 +3729,8 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       } else {
         u32 index = define_var(&encoder);
         encode_expr(&encoder, body->items[body->len - 1], index);
+        if (body->items[body->len - 1]->kind != ExprKindFuncCall)
+          try_gen_rc_inc(&encoder, index);
 
         Instr instr = {
           InstrKindRetVal,
@@ -3544,7 +3745,7 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     DA_APPEND(instrss, encoder.instrs);
     encoder.instrs = (Instrs) {0};
 
-    for (u32 j = encoder.vars->len; j > func->expr->args.len; --j)
+    for (u32 j = encoder.vars->len; j > func->expr->args.len + 1; --j)
       if (encoder.vars->items[j - 1].name.len > 0)
         try_gen_rc_dec(&encoder, j - 1);
 

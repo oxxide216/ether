@@ -1,0 +1,19 @@
+(fun map (f l)
+  (if (is-empty l)
+    []
+   else
+    (prep (f (head l)) (map f (tail l)))))
+
+(fun filter (p l)
+  (if (is-empty l)
+    []
+   elif (p (head l))
+    (prep (head l) (filter p (tail l)))
+   else
+    (filter p (tail l))))
+
+(fun fold (f acc l)
+  (if (is-empty l)
+    acc
+   else
+    (fold f (f acc (head l)) (tail l))))

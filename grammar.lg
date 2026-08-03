@@ -18,6 +18,12 @@ minus=\-
 star=\*
 slash=/
 perc=%
+eq==
+ne=!=
+ls=<
+le=<=
+gt=>
+ge=>=
 oparen=\(
 cparen=\)
 ocurly=[
