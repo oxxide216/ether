@@ -1000,11 +1000,15 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     BinOpKind kind = bin_op_kind_to_evm(expr->as.bin_op.kind);
 
+    bool is_cmp =
+      expr->as.bin_op.kind >= ErBinOpKindEq &&
+      expr->as.bin_op.kind <= ErBinOpKindGe;
+
     Instr instr = {
       InstrKindBinOp,
       {
         .bin_op = {
-          temp_dest_index,
+          is_cmp ? dest_index : temp_dest_index,
           index0,
           index1,
           kind,
@@ -1016,21 +1020,51 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     for (u32 i = 2; i < expr->as.bin_op.args.len; ++i) {
       encode_expr(encoder, expr->as.bin_op.args.items[i], index0);
 
-      Instr instr = {
-        InstrKindBinOp,
-        {
-          .bin_op = {
-            temp_dest_index,
-            temp_dest_index,
-            index0,
-            kind,
+      if (is_cmp) {
+        Instr instr = {
+          InstrKindBinOp,
+          {
+            .bin_op = {
+              temp_dest_index,
+              index1,
+              index0,
+              kind,
+            },
           },
-        },
-      };
-      DA_APPEND(encoder->instrs, instr);
+        };
+        DA_APPEND(encoder->instrs, instr);
+
+        instr = (Instr) {
+          InstrKindBinOp,
+          {
+            .bin_op = {
+              dest_index,
+              dest_index,
+              temp_dest_index,
+              BinOpKindAnd,
+            },
+          },
+        };
+        DA_APPEND(encoder->instrs, instr);
+
+        index1 = index0;
+      } else {
+        Instr instr = {
+          InstrKindBinOp,
+          {
+            .bin_op = {
+              temp_dest_index,
+              temp_dest_index,
+              index0,
+              kind,
+            },
+          },
+        };
+        DA_APPEND(encoder->instrs, instr);
+      }
     }
 
-    if (expr->as.bin_op.args.len > 2) {
+    if (!is_cmp && expr->as.bin_op.args.len > 2) {
       Instr instr = {
         InstrKindCopy,
         {

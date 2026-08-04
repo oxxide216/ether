@@ -518,43 +518,44 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
   }
 
   case ExprKindBinOp: {
-    Type type = { TypeKindInt, {} };
-
     if (expr->as.bin_op.args.len < 2) {
       CERRORF(expr, "Binary operation should have at least 2 arguments, %u were provided\n",
               expr->as.bin_op.args.len);
       return NULL;
     }
 
-    if (expr->as.bin_op.kind >= ErBinOpKindEq && expr->as.bin_op.kind <= ErBinOpKindGe &&
-        expr->as.bin_op.args.len != 2) {
-      CERRORF(expr, "Comparison operations take exactly 2 arguments, %u were provided\n",
-              expr->as.bin_op.args.len);
-      return NULL;
+    bool is_cmp =
+      expr->as.bin_op.kind >= ErBinOpKindEq &&
+      expr->as.bin_op.kind <= ErBinOpKindGe;
+
+    Type *default_arg_type = arena_alloc(checker->arena, sizeof(Type));
+    *default_arg_type = (Type) { TypeKindInt, {} };
+
+    Type *return_type;
+    if (is_cmp) {
+      return_type = arena_alloc(checker->arena, sizeof(Type));
+      *return_type = (Type) { TypeKindBool, {} };
+    } else {
+      return_type = default_arg_type;
     }
 
-    Type *first_arg_type;
     for (u32 i = 0; i < expr->as.bin_op.args.len; ++i) {
       Type *arg_type = check_expr(expr->as.bin_op.args.items[i], checker, true);
       if (!arg_type)
         return NULL;
 
       if (i == 0) {
-        first_arg_type = arg_type;
         if (!type_narrow(expr->as.bin_op.args.items[i], arg_type,
-                         &type, checker->arena, true))
+                         default_arg_type, checker->arena, true))
           return NULL;
 
         if (value_expected && expr->as.bin_op.args.len > 2) {
-          Var var = {
-            {},
-            first_arg_type,
-          };
+          Var var = { {}, return_type };
           DA_APPEND(checker->vars, var);
         }
       } else {
         if (!type_narrow(expr->as.bin_op.args.items[i], arg_type,
-                         first_arg_type, checker->arena, true))
+                         default_arg_type, checker->arena, true))
           return NULL;
       }
 
@@ -567,13 +568,7 @@ Type *check_expr(Expr *expr, FuncChecker *checker, bool value_expected) {
       }
     }
 
-    if (expr->as.bin_op.kind >= ErBinOpKindEq && expr->as.bin_op.kind <= ErBinOpKindGe) {
-      Type *result = arena_alloc(checker->arena, sizeof(Type));
-      result->kind = TypeKindBool;
-      return result;
-    }
-
-    return first_arg_type;
+    return return_type;
   }
 
   case ExprKindFStr: {
