@@ -425,6 +425,13 @@ static void get_captured_var(Encoder *encoder, u32 var_index, u32 dest_index) {
   DA_APPEND(encoder->instrs, instr);
 }
 
+static Expr *get_last_expr(Expr *expr) {
+  if (expr->kind == ExprKindBlock && expr->as.block.len > 0)
+    return get_last_expr(expr->as.block.items[expr->as.block.len - 1]);
+  else
+    return expr;
+}
+
 static void encode_block(Encoder *encoder, Exprs *block,
                          u32 dest_index, bool last_is_return);
 
@@ -797,7 +804,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       u32 arg_index = define_var(encoder);
       encode_expr(encoder, expr->as.func_call.args.items[i], arg_index);
       if (!expr->as.func_call.built_in &&
-          expr->as.func_call.args.items[i]->kind != ExprKindFuncCall)
+          get_last_expr(expr->as.func_call.args.items[i])->kind != ExprKindFuncCall)
         try_gen_rc_inc(encoder, arg_index);
       arg_indices.items[i + is_closure] = arg_index;
     }
@@ -890,7 +897,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     u32 index = define_var(encoder);
     encode_expr(encoder, expr->as.let.value, index);
 
-    if (expr->as.let.value->kind != ExprKindFuncCall)
+    if (get_last_expr(expr->as.let.value)->kind != ExprKindFuncCall)
       try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
@@ -912,7 +919,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     try_gen_rc_dec(encoder, index);
     encode_expr(encoder, expr->as.set.value, index);
-    if (expr->as.set.value->kind != ExprKindFuncCall)
+    if (get_last_expr(expr->as.set.value)->kind != ExprKindFuncCall)
       try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
@@ -933,7 +940,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     if (expr->as.ret.value) {
       u32 index = define_var(encoder);
       encode_expr(encoder, expr->as.ret.value, index);
-      try_gen_rc_inc(encoder, index);
+      if (get_last_expr(expr->as.ret.value)->kind != ExprKindFuncCall)
+        try_gen_rc_inc(encoder, index);
 
       Instr instr = {
         InstrKindRetVal,
@@ -3763,7 +3771,7 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       } else {
         u32 index = define_var(&encoder);
         encode_expr(&encoder, body->items[body->len - 1], index);
-        if (body->items[body->len - 1]->kind != ExprKindFuncCall)
+        if (get_last_expr(body->items[body->len - 1])->kind != ExprKindFuncCall)
           try_gen_rc_inc(&encoder, index);
 
         Instr instr = {
