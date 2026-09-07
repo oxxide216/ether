@@ -17,3 +17,29 @@
     acc
    else
     (fold f (f acc (head l)) (tail l))))
+
+(fun zip (l0 l1)
+  (if (is-empty l0)
+    []
+   elif (is-empty l1)
+    []
+   else
+    (prep [(head l0) (head l1)] (zip (tail l0) (tail l1)))))
+
+; TODO: slice
+
+(fun nth (l n)
+  (if (= n 0)
+    (head l)
+   elif (< n 0)
+    (nth l (+ (len l) n))
+   else
+    (nth (tail l) (- n 1))))
+
+(fun range (b e)
+  (if (= b e)
+    []
+   elif (< b e)
+    (prep b (range (+ b 1) e))
+   else
+    (prep b (range (- b 1) e))))

@@ -11,7 +11,7 @@ print:
 
 global println
 println:
-  cmp dword [rdi], 128
+  cmp dword [rdi], 1024
   jae .skip_fits
 
   push rbx
@@ -158,6 +158,8 @@ ether_alloc:
   push rbx
   push r10
 
+  inc qword [allocated]
+
   add rdi, 8
 
   mov r9, 0
@@ -188,6 +190,8 @@ ether_alloc:
 
 global ether_free
 ether_free:
+  inc qword [freed]
+
   add rsi, 8
   sub rdi, 8
   mov rax, 11
@@ -195,11 +199,20 @@ ether_free:
 
   ret
 
-global ether_free_4
-ether_free_4:; str
+global ether_free_4 ; str
+ether_free_4:
   mov esi, [rdi]
   add rsi, 6
   jmp ether_free
+
+global ether_rc_inc
+ether_rc_inc:
+  cmp rdi, 0
+  je .skip_null
+  inc qword [rdi-8]
+.skip_null:
+
+  ret
 
 global ether_rc_inc_1 ; func
 ether_rc_inc_1:
@@ -220,15 +233,6 @@ ether_rc_inc_4:
   je .skip_static
   inc qword [rdi-8]
 .skip_static:
-
-  ret
-
-global ether_rc_inc_5 ; list
-ether_rc_inc_5:
-  cmp rdi, 0
-  je .skip_null
-  inc qword [rdi-8]
-.skip_null:
 
   ret
 
@@ -258,6 +262,37 @@ ether_rc_dec_4:
   ret
 
 ; ether_rc_dec_5 (for lists) is generated because it has to be generic
+
+global ether_rc_dec_no_free
+ether_rc_dec_no_free:
+  cmp rdi, 0
+  je .skip_null
+  dec qword [rdi-8]
+.skip_null:
+
+  ret
+
+global ether_rc_dec_no_free_1
+ether_rc_dec_no_free_1:
+  cmp rsi, 0
+  je .skip_null
+  dec qword [rsi-8]
+.skip_null:
+
+  ret
+
+global ether_rc_dec_no_free_4
+ether_rc_dec_no_free_4:
+  mov rsi, rdi
+  mov edx, [rdi]
+  add rsi, rdx
+  add rsi, 5
+  cmp byte [rsi], 1
+  je .skip_static
+  dec qword [rdi-8]
+.skip_static:
+
+  ret
 
 global ether_value_to_str_2 ; int
 ether_value_to_str_2:
@@ -395,7 +430,66 @@ ether_value_to_str_4_quoted:
   pop rbx
   ret
 
+global ether_debug_finalize
+ether_debug_finalize:
+  push rbx
+  push r10
+
+  mov rbx, 0
+
+  mov byte [memory_usage_buf+rbx], 'F'
+  inc rbx
+  mov byte [memory_usage_buf+rbx], 'r'
+  inc rbx
+  mov byte [memory_usage_buf+rbx], 'e'
+  inc rbx
+  mov byte [memory_usage_buf+rbx], 'e'
+  inc rbx
+  mov byte [memory_usage_buf+rbx], 'd'
+  inc rbx
+  mov byte [memory_usage_buf+rbx], ':'
+  inc rbx
+  mov byte [memory_usage_buf+rbx], ' '
+  inc rbx
+
+  lea rdi, [memory_usage_buf]
+  mov rsi, rbx
+  mov rdx, [freed]
+  call ether_value_to_str_2
+
+  mov rdi, [freed]
+  call ether_get_value_len_as_str_2
+  add rbx, rax
+
+  mov byte [memory_usage_buf+rbx], '/'
+  inc rbx
+
+  lea rdi, [memory_usage_buf]
+  mov rsi, rbx
+  mov rdx, [allocated]
+  call ether_value_to_str_2
+
+  mov rdi, [allocated]
+  call ether_get_value_len_as_str_2
+  add rbx, rax
+
+  mov byte [memory_usage_buf+rbx], 10
+  inc rbx
+
+  mov rax, 1
+  mov rdi, 2
+  lea rsi, [memory_usage_buf]
+  mov rdx, rbx
+  syscall
+
+  pop r10
+  pop rbx
+  ret
+
 section '.data'
 new_line: db 10
 section '.bss'
-stdout_buf: resb 128
+stdout_buf: resb 1024
+memory_usage_buf: resb 128
+allocated: resq 1
+freed: resq 1

@@ -86,16 +86,26 @@ Type **app_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
 
 Type **head_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
   (void) built_in;
-  (void) arena;
+  (void) arg_types;
 
-  return arg_types->items;
+  Type **result = arena_alloc(arena, sizeof(Type *));
+  result[0] = arena_alloc(arena, sizeof(Type));
+  result[0]->kind = TypeKindList;
+  result[0]->element_type = arena_alloc(arena, sizeof(Type));
+  result[0]->element_type->kind = TypeKindAny;
+  return result;
 }
 
 Type **tail_get_arg_types(BuiltIn *built_in, Types *arg_types, Arena *arena) {
   (void) built_in;
-  (void) arena;
+  (void) arg_types;
 
-  return arg_types->items;
+  Type **result = arena_alloc(arena, sizeof(Type *));
+  result[0] = arena_alloc(arena, sizeof(Type));
+  result[0]->kind = TypeKindList;
+  result[0]->element_type = arena_alloc(arena, sizeof(Type));
+  result[0]->element_type->kind = TypeKindAny;
+  return result;
 }
 
 BuiltIn built_ins[] = {
@@ -119,11 +129,15 @@ BuiltIn built_ins[] = {
   { true, STR_LIT("ether_value_to_str_3"), TYPE(TypeKindInt), 3, { TYPE(TypeKindInt), TYPE(TypeKindInt), TYPE(TypeKindBool) }, NULL, NULL },
   { true, STR_LIT("ether_value_to_str_4"), TYPE(TypeKindInt), 3, { TYPE(TypeKindInt), TYPE(TypeKindInt), TYPE(TypeKindStr) }, NULL, NULL },
   { true, STR_LIT("ether_value_to_str_4_quoted"), TYPE(TypeKindInt), 3, { TYPE(TypeKindInt), TYPE(TypeKindInt), TYPE(TypeKindStr) }, NULL, NULL },
+  { true, STR_LIT("ether_rc_inc"), TYPE(TypeKindInt), 1, { TYPE(TypeKindAny) }, NULL, NULL },
   { true, STR_LIT("ether_rc_inc_1"), TYPE(TypeKindInt), 1, { TYPE(TypeKindFunc) }, NULL, NULL },
   { true, STR_LIT("ether_rc_inc_4"), TYPE(TypeKindInt), 1, { TYPE(TypeKindStr) }, NULL, NULL },
-  { true, STR_LIT("ether_rc_inc_5"), TYPE(TypeKindInt), 1, { TYPE(TypeKindList) }, NULL, NULL },
   { true, STR_LIT("ether_rc_dec_1"), TYPE(TypeKindInt), 1, { TYPE(TypeKindFunc) }, NULL, NULL },
   { true, STR_LIT("ether_rc_dec_4"), TYPE(TypeKindInt), 1, { TYPE(TypeKindStr) }, NULL, NULL },
+  { true, STR_LIT("ether_rc_dec_no_free"), TYPE(TypeKindInt), 1, { TYPE(TypeKindAny) }, NULL, NULL },
+  { true, STR_LIT("ether_rc_dec_no_free_1"), TYPE(TypeKindInt), 1, { TYPE(TypeKindFunc) }, NULL, NULL },
+  { true, STR_LIT("ether_rc_dec_no_free_4"), TYPE(TypeKindInt), 1, { TYPE(TypeKindStr) }, NULL, NULL },
+  { true, STR_LIT("ether_debug_finalize"), TYPE(TypeKindUnit), 0, {}, NULL, NULL },
 };
 
 u32 built_ins_len = ARRAY_LEN(built_ins);

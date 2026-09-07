@@ -1,4 +1,6 @@
 (fun main ()
-  (let xs [0 1 2 3])
+  (let xs (range 0 4))
   (let r (fold + 0 (filter (= (% $0 2) 0) (map (+ $0 1) xs))))
-  (println i"{r}"))
+  (println i"{r}")
+  (println i"{(nth xs 2)}:{(nth xs -1)}")
+  (println i"{(zip (range 0 4) (range -4 0))}"))

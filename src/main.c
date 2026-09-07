@@ -8,6 +8,8 @@
 #include "shl/shl-str.h"
 #include "shl/shl-log.h"
 
+// TODO: add a linker script to reduce binary size
+
 #define EVM_PREFIX  "libs/e/evm -o "
 #define YASM_PREFIX "yasm -felf64 -o "
 #define LD_PREFIX   "ld -o "

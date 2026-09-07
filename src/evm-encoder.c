@@ -20,6 +20,7 @@ typedef struct {
   Funcs         *funcs;
   Instrs         instrs;
   Data           data;
+  u32            index;
   Vars          *vars;
   u32            vars_defined;
   BuiltInsToGen  built_ins_to_gen;
@@ -32,7 +33,7 @@ static void encode_str(FILE *stream, Str str) {
 
 static ValueKind get_type_value_kind(Type *type) {
   switch (type->kind) {
-  case TypeKindUnit: return ValueKindUnsigned;
+  case TypeKindUnit: return 0;
   case TypeKindFunc: return ValueKindUnsigned;
   case TypeKindInt:  return ValueKindSigned;
   case TypeKindBool: return ValueKindUnsigned;
@@ -307,27 +308,21 @@ static bool type_is_rc(Type *type) {
 
 static void try_gen_rc_inc(Encoder *encoder, u32 index) {
   if (type_is_rc(encoder->vars->items[index].type)) {
-    StringBuilder sb = {0};
-    sb_push_str(&sb, STR_LIT("ether_rc_inc_"));
-    sb_push_u32(&sb, encoder->vars->items[index].type->kind);
-
     Indices arg_indices;
     arg_indices.len = 1;
     arg_indices.cap = arg_indices.len;
     arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
     arg_indices.items[0] = index;
 
-    Str name;
-    name.len = sb.len;
-    name.ptr = arena_alloc(encoder->arena, name.len);
-    memcpy(name.ptr, sb.buffer, name.len);
-    free(sb.buffer);
-
     Instr instr = {
       InstrKindCall,
       {
         .call = {
-          name,
+          encoder->vars->items[index].type->kind == TypeKindFunc ?
+            STR_LIT("ether_rc_inc_1") :
+            encoder->vars->items[index].type->kind == TypeKindStr ?
+              STR_LIT("ether_rc_inc_4") :
+              STR_LIT("ether_rc_inc"),
           arg_indices,
         },
       },
@@ -341,20 +336,6 @@ static void try_gen_rc_dec(Encoder *encoder, u32 index) {
     StringBuilder sb = {0};
     sb_push_str(&sb, STR_LIT("ether_rc_dec_"));
     sb_push_type_hash(&sb, encoder->funcs, encoder->vars->items[index].type);
-
-    Str temp_name = { sb.buffer, STR_LIT("ether_rc_dec_").len + 1 };
-    temp_name.ptr[STR_LIT("ether_rc_").len + 0] = 'i';
-    temp_name.ptr[STR_LIT("ether_rc_").len + 1] = 'n';
-    if (encoder->instrs.len > 0) {
-      Instr *instr = encoder->instrs.items + encoder->instrs.len - 1;
-      if (instr->kind == InstrKindCall && str_eq(instr->as.call.name, temp_name)) {
-        free(sb.buffer);
-        --encoder->instrs.len;
-        return;
-      }
-    }
-    temp_name.ptr[STR_LIT("ether_rc_").len + 0] = 'd';
-    temp_name.ptr[STR_LIT("ether_rc_").len + 1] = 'e';
 
     Indices arg_indices;
     arg_indices.len = 1;
@@ -378,6 +359,31 @@ static void try_gen_rc_dec(Encoder *encoder, u32 index) {
           encoder->vars->items[index].type->kind == TypeKindFunc ?
             STR_LIT("ether_rc_dec_1") :
             name,
+          arg_indices,
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+  }
+}
+
+static void try_gen_rc_dec_no_free(Encoder *encoder, u32 index) {
+  if (type_is_rc(encoder->vars->items[index].type)) {
+    Indices arg_indices;
+    arg_indices.len = 1;
+    arg_indices.cap = arg_indices.len;
+    arg_indices.items = arena_alloc(encoder->arena, arg_indices.cap * sizeof(u32));
+    arg_indices.items[0] = index;
+
+    Instr instr = {
+      InstrKindCall,
+      {
+        .call = {
+          encoder->vars->items[index].type->kind == TypeKindFunc ?
+            STR_LIT("ether_rc_dec_no_free_1") :
+            encoder->vars->items[index].type->kind == TypeKindStr ?
+              STR_LIT("ether_rc_dec_no_free_4") :
+              STR_LIT("ether_rc_dec_no_free"),
           arg_indices,
         },
       },
@@ -425,17 +431,11 @@ static void get_captured_var(Encoder *encoder, u32 var_index, u32 dest_index) {
   DA_APPEND(encoder->instrs, instr);
 }
 
-static Expr *get_last_expr(Expr *expr) {
-  if (expr->kind == ExprKindBlock && expr->as.block.len > 0)
-    return get_last_expr(expr->as.block.items[expr->as.block.len - 1]);
-  else
-    return expr;
-}
-
 static void encode_block(Encoder *encoder, Exprs *block,
-                         u32 dest_index, bool last_is_return);
+                         u32 dest_index, bool last_is_return,
+                         bool is_tail);
 
-static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
+static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_tail) {
   switch (expr->kind) {
   case ExprKindStr: {
     if (dest_index == (u32) -1)
@@ -500,7 +500,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   } break;
 
   case ExprKindBlock: {
-    encode_block(encoder, &expr->as.block, dest_index, false);
+    encode_block(encoder, &expr->as.block, dest_index, false, is_tail);
   } break;
 
   case ExprKindIdent: {
@@ -729,14 +729,24 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     u32 index;
     if (!opt) {
       index = define_var(encoder);
-      encode_expr(encoder, expr->as.func_call.func, index);
+      encode_expr(encoder, expr->as.func_call.func, index, false);
     }
+
+    bool no_dest = dest_index == (u32) -1;
+    if (no_dest)
+      dest_index = define_var(encoder);
 
     Str name;
     bool is_built_in_to_gen = false;
     if (opt) {
       if (expr->as.func_call.built_in) {
         name = expr->as.func_call.built_in->name;
+
+        is_built_in_to_gen =
+          str_eq(name, STR_LIT("prep")) ||
+          str_eq(name, STR_LIT("app")) ||
+          str_eq(name, STR_LIT("head")) ||
+          str_eq(name, STR_LIT("tail"));
       } else {
         u32 func_index = get_func_index(encoder->funcs, expr->as.func_call.func->as.ident.name);
         Func *func = encoder->funcs->items + func_index;
@@ -748,11 +758,6 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           free(temp_name.ptr);
         }
       }
-
-      is_built_in_to_gen = str_eq(name, STR_LIT("prep")) ||
-                           str_eq(name, STR_LIT("app")) ||
-                           str_eq(name, STR_LIT("head")) ||
-                           str_eq(name, STR_LIT("tail"));
     }
 
     bool is_closure = !expr->as.func_call.built_in;
@@ -800,14 +805,18 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       arg_indices.items[0] = ctx_index;
     }
 
+    Func *func = encoder->funcs->items + encoder->index;
+    bool is_tail_call = is_tail && opt && str_eq(expr->as.func_call.func->as.ident.name, func->expr->name);
+
     for (u32 i = 0; i < expr->as.func_call.args.len; ++i) {
       u32 arg_index = define_var(encoder);
-      encode_expr(encoder, expr->as.func_call.args.items[i], arg_index);
-      if (!expr->as.func_call.built_in &&
-          get_last_expr(expr->as.func_call.args.items[i])->kind != ExprKindFuncCall)
-        try_gen_rc_inc(encoder, arg_index);
+      encode_expr(encoder, expr->as.func_call.args.items[i], arg_index, false);
+      /* if (expr->as.func_call.built_in) */
+        /* try_gen_rc_inc(encoder, arg_index); */
       arg_indices.items[i + is_closure] = arg_index;
     }
+
+    // TODO: Insert last_instrs at tail call in evm
 
     if (is_built_in_to_gen) {
       StringBuilder sb = {0};
@@ -826,9 +835,11 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       built_ins_to_gen_append(encoder, name, dest_index, arg_indices);
     }
 
+    Var *dest_var = encoder->vars->items + dest_index;
+
     Instr instr;
     if (opt) {
-      if (dest_index == (u32) -1) {
+      if (dest_var->type->kind == TypeKindUnit) {
         instr = (Instr) {
           InstrKindCall,
           {
@@ -839,17 +850,16 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           },
         };
       } else {
-        Var *var = encoder->vars->items + dest_index;
-        u32 size = get_type_size(var->type);
-        ValueKind kind = get_type_value_kind(var->type);
+        u32 dest_size = get_type_size(dest_var->type);
+        ValueKind dest_kind = get_type_value_kind(dest_var->type);
 
         instr = (Instr) {
           InstrKindCallAssign,
           {
             .call_assign = {
               dest_index,
-              size,
-              kind,
+              dest_size,
+              dest_kind,
               name,
               arg_indices,
             },
@@ -857,7 +867,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
         };
       }
     } else {
-      if (dest_index == (u32) -1) {
+      if (dest_var->type->kind == TypeKindUnit) {
         instr = (Instr) {
           InstrKindCallRef,
           {
@@ -868,17 +878,16 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
           },
         };
       } else {
-        Var *var = encoder->vars->items + dest_index;
-        u32 size = get_type_size(var->type);
-        ValueKind kind = get_type_value_kind(var->type);
+        u32 dest_size = get_type_size(dest_var->type);
+        ValueKind dest_kind = get_type_value_kind(dest_var->type);
 
         instr = (Instr) {
           InstrKindCallRefAssign,
           {
             .call_ref_assign = {
               dest_index,
-              size,
-              kind,
+              dest_size,
+              dest_kind,
               index,
               arg_indices,
             },
@@ -888,17 +897,22 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     }
     DA_APPEND(encoder->instrs, instr);
 
-    if (!expr->as.func_call.built_in)
-      for (u32 i = expr->as.func_call.args.len; i > 0; --i)
-        try_gen_rc_dec(encoder, arg_indices.items[i - 1]);
+    if (!is_tail_call) {
+      /* if (expr->as.func_call.built_in) */
+        /* for (u32 i = 0; i < expr->as.func_call.args.len; ++i) */
+          /* try_gen_rc_dec(encoder, arg_indices.items[i + is_closure]); */
+
+      if (no_dest)
+        try_gen_rc_dec(encoder, dest_index);
+      /* else */
+        /* try_gen_rc_dec_no_free(encoder, dest_index); */
+    }
   } break;
 
   case ExprKindLet: {
     u32 index = define_var(encoder);
-    encode_expr(encoder, expr->as.let.value, index);
-
-    if (get_last_expr(expr->as.let.value)->kind != ExprKindFuncCall)
-      try_gen_rc_inc(encoder, index);
+    encode_expr(encoder, expr->as.let.value, index, false);
+    try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
       Instr instr = {
@@ -916,11 +930,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
   case ExprKindSet: {
     u32 index = get_var_index(encoder->vars, encoder->vars_defined, expr->as.set.name);
-
     try_gen_rc_dec(encoder, index);
-    encode_expr(encoder, expr->as.set.value, index);
-    if (get_last_expr(expr->as.set.value)->kind != ExprKindFuncCall)
-      try_gen_rc_inc(encoder, index);
+    encode_expr(encoder, expr->as.set.value, index, false);
+    try_gen_rc_inc(encoder, index);
 
     if (dest_index != (u32) -1) {
       Instr instr = {
@@ -939,9 +951,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
   case ExprKindRet: {
     if (expr->as.ret.value) {
       u32 index = define_var(encoder);
-      encode_expr(encoder, expr->as.ret.value, index);
-      if (get_last_expr(expr->as.ret.value)->kind != ExprKindFuncCall)
-        try_gen_rc_inc(encoder, index);
+      encode_expr(encoder, expr->as.ret.value, index, true);
+      try_gen_rc_inc(encoder, index);
 
       Instr instr = {
         InstrKindRetVal,
@@ -961,7 +972,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
   case ExprKindIf: {
     u32 cond_index = define_var(encoder);
-    encode_expr(encoder, expr->as._if.cond, cond_index);
+    encode_expr(encoder, expr->as._if.cond, cond_index, false);
 
     u32 cond_jump_instr_index = encoder->instrs.len;
     Instr instr = {
@@ -972,7 +983,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     };
     DA_APPEND(encoder->instrs, instr);
 
-    encode_block(encoder, &expr->as._if.if_body, dest_index, false);
+    encode_block(encoder, &expr->as._if.if_body, dest_index, false, is_tail);
 
     u32 jump_instr_index = encoder->instrs.len;
     if (expr->as._if.else_body.len > 0) {
@@ -987,7 +998,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 
     encoder->instrs.items[cond_jump_instr_index].as.jump_if_not.target = encoder->instrs.len;
 
-    encode_block(encoder, &expr->as._if.else_body, dest_index, false);
+    encode_block(encoder, &expr->as._if.else_body, dest_index, false, is_tail);
 
     if (expr->as._if.else_body.len > 0)
       encoder->instrs.items[jump_instr_index].as.jump.target = encoder->instrs.len;
@@ -1002,9 +1013,9 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       temp_dest_index = define_var(encoder);
 
     u32 index0 = define_var(encoder);
-    encode_expr(encoder, expr->as.bin_op.args.items[0], index0);
+    encode_expr(encoder, expr->as.bin_op.args.items[0], index0, false);
     u32 index1 = define_var(encoder);
-    encode_expr(encoder, expr->as.bin_op.args.items[1], index1);
+    encode_expr(encoder, expr->as.bin_op.args.items[1], index1, false);
 
     BinOpKind kind = bin_op_kind_to_evm(expr->as.bin_op.kind);
 
@@ -1026,7 +1037,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     DA_APPEND(encoder->instrs, instr);
 
     for (u32 i = 2; i < expr->as.bin_op.args.len; ++i) {
-      encode_expr(encoder, expr->as.bin_op.args.items[i], index0);
+      encode_expr(encoder, expr->as.bin_op.args.items[i], index0, false);
 
       if (is_cmp) {
         Instr instr = {
@@ -1098,7 +1109,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
       FStrPart *part = expr->as.fstr.parts.items + i;
       if (part->expr) {
         u32 part_var_index = define_var(encoder);
-        encode_expr(encoder, part->expr, part_var_index);
+        encode_expr(encoder, part->expr, part_var_index, false);
         DA_APPEND(part_var_indices, part_var_index);
       } else {
         start_size += part->str.len;
@@ -1443,7 +1454,7 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
     DA_APPEND(encoder->instrs, instr);
 
     for (u32 i = elements->len; i > 0; --i) {
-      encode_expr(encoder, elements->items[i - 1], element_index);
+      encode_expr(encoder, elements->items[i - 1], element_index, false);
 
       instr = (Instr) {
         InstrKindCallAssign,
@@ -1464,13 +1475,14 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index) {
 }
 
 static void encode_block(Encoder *encoder, Exprs *block,
-                         u32 dest_index, bool skip_last) {
+                         u32 dest_index, bool skip_last,
+                         bool is_tail) {
   for (u32 i = 0; i + 1 < block->len; ++i)
-    encode_expr(encoder, block->items[i], (u32) -1);
+    encode_expr(encoder, block->items[i], (u32) -1, false);
 
   if (block->len > 0)
     if (!skip_last || block->items[block->len - 1]->kind == ExprKindRet)
-      encode_expr(encoder, block->items[block->len - 1], dest_index);
+      encode_expr(encoder, block->items[block->len - 1], dest_index, is_tail);
 }
 
 static void encode_instr(FILE *stream, Instr *instr) {
@@ -1811,6 +1823,8 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
 
+    try_gen_rc_inc(encoder, dest_index);
+
     instr = (Instr) {
       InstrKindRetVal,
       {
@@ -2117,6 +2131,8 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
 
     encoder->instrs.items[jump2_instr_index].as.jump_if_not.target = encoder->instrs.len;
 
+    try_gen_rc_inc(encoder, new_index);
+
     instr = (Instr) {
       InstrKindRetVal,
       {
@@ -2266,7 +2282,7 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
           cond_index,
           refs_index,
           zero_index,
-          BinOpKindEqInt,
+          BinOpKindLeInt,
         },
       },
     };
@@ -2551,7 +2567,7 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
           cond_index,
           temp_index,
           zero_index,
-          BinOpKindEqInt,
+          BinOpKindLeInt,
         },
       },
     };
@@ -3555,6 +3571,22 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     u32 zero_index = define_var(encoder);
 
     Instr instr = {
+      InstrKindStore,
+      {
+        .store = {
+          zero_index,
+          {
+            ValueKindUnsigned,
+            {
+              ._unsigned = 0,
+            },
+          },
+        },
+      },
+    };
+    DA_APPEND(encoder->instrs, instr);
+
+    instr = (Instr) {
       InstrKindBinOp,
       {
         .bin_op = {
@@ -3626,6 +3658,8 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       },
     };
     DA_APPEND(encoder->instrs, instr);
+
+    try_gen_rc_inc(encoder, dest_index);
 
     instr = (Instr) {
       InstrKindRetVal,
@@ -3719,6 +3753,8 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
 
+    try_gen_rc_inc(encoder, dest_index);
+
     instr = (Instr) {
       InstrKindRetVal,
       {
@@ -3753,6 +3789,7 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     ++funcs_encoded;
 
     encoder.instrs = (Instrs) {0};
+    encoder.index = i;
     encoder.vars = &func->vars;
     // + 1 is for context that contains captured values
     encoder.vars_defined = func->captured_vars.len + func->expr->args.len + 1;
@@ -3763,16 +3800,18 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     Exprs *body = &funcs->items[i].expr->body;
     bool is_result_zero_sized = get_type_size(func->type->return_type) == 0;
 
-    encode_block(&encoder, body, (u32) -1, !is_result_zero_sized);
+    for (u32 j = 0; j < func->expr->args.len; ++j)
+      try_gen_rc_inc(&encoder, j + 1);
+
+    encode_block(&encoder, body, (u32) -1, !is_result_zero_sized, true);
 
     if (body->len > 0 && body->items[body->len - 1]->kind != ExprKindRet) {
       if (is_result_zero_sized) {
-        encode_expr(&encoder, body->items[body->len - 1], (u32) -1);
+        encode_expr(&encoder, body->items[body->len - 1], (u32) -1, true);
       } else {
         u32 index = define_var(&encoder);
-        encode_expr(&encoder, body->items[body->len - 1], index);
-        if (get_last_expr(body->items[body->len - 1])->kind != ExprKindFuncCall)
-          try_gen_rc_inc(&encoder, index);
+        encode_expr(&encoder, body->items[body->len - 1], index, true);
+        try_gen_rc_inc(&encoder, index);
 
         Instr instr = {
           InstrKindRetVal,
@@ -3787,9 +3826,25 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     DA_APPEND(instrss, encoder.instrs);
     encoder.instrs = (Instrs) {0};
 
-    for (u32 j = encoder.vars->len; j > func->expr->args.len + 1; --j)
+    // TODO: remove " + func->arg_names.len"
+    for (u32 j = encoder.vars->len; j > func->captured_vars.len + 1 + func->arg_names.len; --j)
       if (encoder.vars->items[j - 1].name.len > 0)
         try_gen_rc_dec(&encoder, j - 1);
+
+#ifndef NDEBUG
+    if (str_eq(func->expr->name, STR_LIT("main"))) {
+      Instr instr = {
+        InstrKindCall,
+        {
+          .call = {
+            STR_LIT("ether_debug_finalize"),
+            {},
+          },
+        },
+      };
+      DA_APPEND(encoder.instrs, instr);
+    }
+#endif
 
     DA_APPEND(last_instrss, encoder.instrs);
   }
