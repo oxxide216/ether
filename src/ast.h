@@ -160,9 +160,10 @@ typedef struct {
 } ExprLoc;
 
 struct Expr {
-  ExprKind kind;
-  ExprAs   as;
-  ExprLoc  loc;
+  ExprKind  kind;
+  ExprAs    as;
+  ExprLoc   loc;
+  Type     *type;
 };
 
 typedef struct {

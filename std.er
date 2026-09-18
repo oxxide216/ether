@@ -1,3 +1,15 @@
+(macro and (a b)
+  (if a
+    b
+   else
+    false))
+
+(macro or (a b)
+  (if a
+    true
+   else
+    b))
+
 (fun map (f l)
   (if (is-empty l)
     []
@@ -19,9 +31,7 @@
     (fold f (f acc (head l)) (tail l))))
 
 (fun zip (l0 l1)
-  (if (is-empty l0)
-    []
-   elif (is-empty l1)
+  (if (or (is-empty l0) (is-empty l1))
     []
    else
     (prep [(head l0) (head l1)] (zip (tail l0) (tail l1)))))
