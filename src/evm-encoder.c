@@ -521,6 +521,29 @@ static void get_captured_var(Encoder *encoder, u32 var_index, u32 dest_index) {
   DA_APPEND(encoder->instrs, instr);
 }
 
+static void encode_last_instrs(Encoder *encoder) {
+  Func *func = encoder->funcs->items + encoder->index;
+
+  for (u32 i = encoder->vars->len; i > func->captured_vars.len + 1; --i)
+    if (encoder->vars->items[i - 1].name.len > 0)
+      try_gen_rc_dec(encoder, i - 1, encoder->vars->items[i - 1].type);
+
+#ifndef NDEBUG
+  if (str_eq(func->expr->name, STR_LIT("main"))) {
+    Instr instr = {
+      InstrKindCall,
+      {
+        .call = {
+          STR_LIT("ether_debug_finalize"),
+          {},
+        },
+      },
+    };
+      DA_APPEND(encoder->instrs, instr);
+  }
+#endif
+}
+
 static void encode_block(Encoder *encoder, Exprs *block,
                          u32 dest_index, bool last_is_return,
                          bool is_tail);
@@ -896,18 +919,14 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_ta
       arg_indices.items[0] = ctx_index;
     }
 
-    Func *func = encoder->funcs->items + encoder->index;
-    bool is_tail_call = is_tail && opt && str_eq(expr->as.func_call.func->as.ident.name, func->expr->name);
-
     for (u32 i = 0; i < expr->as.func_call.args.len; ++i) {
       u32 arg_index = define_temp_var(encoder, expr->as.func_call.args.items[i]->type);
       encode_expr(encoder, expr->as.func_call.args.items[i], arg_index, false);
-      /* if (expr->as.func_call.built_in) */
-        /* try_gen_rc_inc(encoder, arg_index, expr->as.func_call.args.items[i]->type); */
+      if (expr->as.func_call.built_in &&
+          expr->as.func_call.args.items[i]->kind != ExprKindIdent)
+        try_gen_rc_inc(encoder, arg_index, expr->as.func_call.args.items[i]->type);
       arg_indices.items[i + is_closure] = arg_index;
     }
-
-    // TODO: Insert last_instrs at tail call in evm
 
     if (is_built_in_to_gen) {
       StringBuilder sb = {0};
@@ -925,6 +944,15 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_ta
 
       built_ins_to_gen_append(encoder, name, dest_index, arg_indices);
     }
+
+    Func *func = encoder->funcs->items + encoder->index;
+    bool is_tail_call =
+      is_tail && opt &&
+      !type_kind_is_rc(func->type->return_type->kind) &&
+      str_eq(expr->as.func_call.func->as.ident.name, func->expr->name);
+
+    if (is_tail_call)
+      encode_last_instrs(encoder);
 
     Instr instr;
     if (opt) {
@@ -987,15 +1015,16 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_ta
     DA_APPEND(encoder->instrs, instr);
 
     if (!is_tail_call) {
-      /* if (expr->as.func_call.built_in) */
-        /* for (u32 i = 0; i < expr->as.func_call.args.len; ++i) */
-          /* try_gen_rc_dec(encoder, arg_indices.items[i + is_closure], */
-                         /* expr->as.func_call.args.items[i]->type); */
+      if (expr->as.func_call.built_in)
+        for (u32 i = 0; i < expr->as.func_call.args.len; ++i)
+          if (expr->as.func_call.args.items[i]->kind != ExprKindIdent)
+            try_gen_rc_dec(encoder, arg_indices.items[i + is_closure],
+                           expr->as.func_call.args.items[i]->type);
 
       if (no_dest)
         try_gen_rc_dec(encoder, dest_index, expr->type);
-      /* else */
-        /* try_gen_rc_dec_no_free(encoder, dest_index, expr->type); */
+      else
+        try_gen_rc_dec_no_free(encoder, dest_index, expr->type);
     }
   } break;
 
@@ -1039,6 +1068,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_ta
   } break;
 
   case ExprKindRet: {
+    encode_last_instrs(encoder);
+
     if (expr->as.ret.value) {
       u32 index = define_temp_var(encoder, expr->as.ret.value->type);
       encode_expr(encoder, expr->as.ret.value, index, true);
@@ -1451,6 +1482,11 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_ta
           },
         };
         DA_APPEND(encoder->instrs, instr);
+      }
+
+      if (part->expr) {
+        u32 part_var_index = part_var_indices.items[i];
+        try_gen_rc_dec(encoder, part_var_index, part->expr->type);
       }
     }
 
@@ -3633,7 +3669,6 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
   encoder.funcs = funcs;
 
   Da(Instrs) instrss = {0};
-  Da(Instrs) last_instrss = {0};
   u32 funcs_encoded = 0;
 
   for (u32 i = 0; i < funcs->len; ++i) {
@@ -3666,7 +3701,7 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       body->len > 0 &&
       body->items[body->len - 1]->kind == ExprKindRet;
 
-    encode_block(&encoder, body, (u32) -1, !is_last_ret, true);
+    encode_block(&encoder, body, (u32) -1, !is_last_ret, is_last_ret);
 
     if (!is_last_ret) {
       if (get_type_size(func->type->return_type) == 0) {
@@ -3686,30 +3721,9 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       }
     }
 
+    encode_last_instrs(&encoder);
+
     DA_APPEND(instrss, encoder.instrs);
-    encoder.instrs = (Instrs) {0};
-
-    // TODO: remove " + func->arg_names.len"
-    for (u32 j = encoder.vars->len; j > func->captured_vars.len + 1 + func->arg_names.len; --j)
-      if (encoder.vars->items[j - 1].name.len > 0)
-        try_gen_rc_dec(&encoder, j - 1, encoder.vars->items[j - 1].type);
-
-#ifndef NDEBUG
-    if (str_eq(func->expr->name, STR_LIT("main"))) {
-      Instr instr = {
-        InstrKindCall,
-        {
-          .call = {
-            STR_LIT("ether_debug_finalize"),
-            {},
-          },
-        },
-      };
-      DA_APPEND(encoder.instrs, instr);
-    }
-#endif
-
-    DA_APPEND(last_instrss, encoder.instrs);
   }
 
   for (u32 i = 0; i < encoder.built_ins_to_gen.len; ++i) {
@@ -3724,7 +3738,6 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     encode_built_in_to_gen(&encoder, built_in);
 
     DA_APPEND(instrss, encoder.instrs);
-    DA_APPEND(last_instrss, (Instrs) {0});
   }
 
   fwrite(&instrss.len, sizeof(instrss.len), 1, stream);
@@ -3782,10 +3795,8 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     for (u32 j = 0; j < instrs->len; ++j)
       encode_instr(stream, instrs->items + j);
 
-    instrs = last_instrss.items + funcs_encoded;
-    fwrite(&instrs->len, sizeof(instrs->len), 1, stream);
-    for (u32 j = 0; j < instrs->len; ++j)
-      encode_instr(stream, instrs->items + j);
+    u32 zero = 0;
+    fwrite(&zero, sizeof(zero), 1, stream);
 
     ++funcs_encoded;
   }
@@ -3813,12 +3824,6 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
       free(instrss.items[i].items);
   if (instrss.items)
     free(instrss.items);
-
-  for (u32 i = 0; i < last_instrss.len; ++i)
-    if (last_instrss.items[i].items)
-      free(last_instrss.items[i].items);
-  if (last_instrss.items)
-    free(last_instrss.items);
 
   if (encoder.data.items)
     free(encoder.data.items);
