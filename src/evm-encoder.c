@@ -3706,10 +3706,14 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     if (!is_last_ret) {
       if (get_type_size(func->type->return_type) == 0) {
         encode_expr(&encoder, body->items[body->len - 1], (u32) -1, true);
+
+        encode_last_instrs(&encoder);
       } else {
         u32 index = define_temp_var(&encoder, body->items[body->len - 1]->type);
         encode_expr(&encoder, body->items[body->len - 1], index, true);
         try_gen_rc_inc(&encoder, index, body->items[body->len - 1]->type);
+
+        encode_last_instrs(&encoder);
 
         Instr instr = {
           InstrKindRetVal,
@@ -3720,8 +3724,6 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
         DA_APPEND(encoder.instrs, instr);
       }
     }
-
-    encode_last_instrs(&encoder);
 
     DA_APPEND(instrss, encoder.instrs);
   }
