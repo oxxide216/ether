@@ -240,8 +240,12 @@ global ether_rc_dec_1 ; func
 ether_rc_dec_1:
   cmp rsi, 0
   je .skip_null
+  dec qword [rsi-8]
+  cmp qword[rsi-8], 0
+  jg .skip_alive
   mov rdx, [rsi]
   call rdx
+.skip_alive:
 .skip_null:
 
   ret
