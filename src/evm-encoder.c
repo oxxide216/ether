@@ -1068,12 +1068,12 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_ta
   } break;
 
   case ExprKindRet: {
-    encode_last_instrs(encoder);
-
     if (expr->as.ret.value) {
       u32 index = define_temp_var(encoder, expr->as.ret.value->type);
       encode_expr(encoder, expr->as.ret.value, index, true);
       try_gen_rc_inc(encoder, index, expr->as.ret.value->type);
+
+      encode_last_instrs(encoder);
 
       Instr instr = {
         InstrKindRetVal,
@@ -1083,6 +1083,8 @@ static void encode_expr(Encoder *encoder, Expr *expr, u32 dest_index, bool is_ta
       };
       DA_APPEND(encoder->instrs, instr);
     } else {
+      encode_last_instrs(encoder);
+
       Instr instr = {
         InstrKindRet,
         {},
