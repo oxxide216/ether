@@ -483,7 +483,32 @@ static void try_gen_rc_dec_no_free(Encoder *encoder, u32 index, Type *type) {
 }
 
 static void get_captured_var(Encoder *encoder, u32 var_index, u32 dest_index) {
+  Func *func = encoder->funcs->items + encoder->index;
+
+  Var *var = encoder->vars->items + var_index + 1 + func->expr->args.len;
+  ValueKind kind = get_type_value_kind(var->type);
+  u32 size = get_type_size(var->type);
+
   Segments segments;
+  segments.len = 1;
+  segments.cap = segments.len;
+  segments.items =
+    arena_alloc(encoder->arena, segments.cap * sizeof(AlignedSegment));
+
+  segments.items[0].offset = 0;
+  segments.items[0].size = size;
+
+  Instr instr = {
+    InstrKindAlloc,
+    {
+      .alloc = {
+        dest_index,
+        segments,
+      },
+    },
+  };
+  DA_APPEND(encoder->instrs, instr);
+
   segments.len = var_index + 2;
   segments.cap = segments.len;
   segments.items =
@@ -494,17 +519,13 @@ static void get_captured_var(Encoder *encoder, u32 var_index, u32 dest_index) {
 
   i32 offset = 8;
   for (u32 i = 0; i <= var_index; ++i) {
-    u32 size = get_type_size(encoder->vars->items[i].type);
+    u32 size = get_type_size(encoder->vars->items[i + 1 + func->expr->args.len].type);
     segments.items[i + 1].offset = offset;
     segments.items[i + 1].size = size;
     offset += size;
   }
 
-  Var *var = encoder->vars->items + var_index;
-  ValueKind kind = get_type_value_kind(var->type);
-  u32 size = get_type_size(var->type);
-
-  Instr instr = {
+  instr = (Instr) {
     InstrKindCopyFromRefFixed,
     {
       .copy_from_ref_fixed = {
@@ -524,7 +545,13 @@ static void get_captured_var(Encoder *encoder, u32 var_index, u32 dest_index) {
 static void encode_last_instrs(Encoder *encoder) {
   Func *func = encoder->funcs->items + encoder->index;
 
-  for (u32 i = encoder->vars->len; i > func->captured_vars.len + 1; --i)
+  for (u32 i = encoder->vars->len;
+       i > 1 + func->expr->args.len + func->captured_vars.len;
+       --i)
+    if (encoder->vars->items[i - 1].name.len > 0)
+      try_gen_rc_dec(encoder, i - 1, encoder->vars->items[i - 1].type);
+
+  for (u32 i = func->expr->args.len + 1; i > 1; --i)
     if (encoder->vars->items[i - 1].name.len > 0)
       try_gen_rc_dec(encoder, i - 1, encoder->vars->items[i - 1].type);
 
@@ -3697,20 +3724,20 @@ void encode_ast_as_evm_ir(FILE *stream, Arena *arena, Funcs *funcs) {
     encoder.instrs = (Instrs) {0};
     encoder.index = i;
     encoder.vars = &func->vars;
-    // + 1 for a context that contains captured values
-    encoder.named_vars_defined = func->captured_vars.len + 1 + func->expr->args.len;
+    // + 1 for a context that contains captured vars
+    encoder.named_vars_defined = 1 + func->expr->args.len + func->captured_vars.len;
 
     Var ctx_var = { {}, NULL };
-    DA_INSERT(func->vars, func->captured_vars.len, ctx_var);
-
-    for (u32 j = 0; j < func->captured_vars.len; ++j)
-      get_captured_var(&encoder, j, j);
-
-    Exprs *body = &funcs->items[i].expr->body;
+    DA_INSERT(func->vars, 0, ctx_var);
 
     for (u32 j = 0; j < func->expr->args.len; ++j)
-      try_gen_rc_inc(&encoder, func->captured_vars.len + 1 + j,
-                     func->vars.items[func->captured_vars.len + 1 + j].type);
+      try_gen_rc_inc(&encoder, 1 + j,
+                     func->vars.items[1 + j].type);
+
+    for (u32 j = 0; j < func->captured_vars.len; ++j)
+      get_captured_var(&encoder, j, j + 1 + func->expr->args.len);
+
+    Exprs *body = &funcs->items[i].expr->body;
 
     bool is_last_ret =
       body->len > 0 &&

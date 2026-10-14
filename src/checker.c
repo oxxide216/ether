@@ -710,7 +710,7 @@ bool check_func(u32 index, Funcs *funcs, Arena *arena, u32 *lambda_counter) {
   func->captured_vars = checker.used_captured_vars;
 
   for (u32 i = func->captured_vars.len; i > 0; --i)
-    DA_INSERT(func->vars, 0, func->captured_vars.items[i - 1]);
+    DA_INSERT(func->vars, func->expr->args.len, func->captured_vars.items[i - 1]);
 
   return true;
 }
