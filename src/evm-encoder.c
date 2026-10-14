@@ -2205,6 +2205,8 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     };
     DA_APPEND(encoder->instrs, instr);
 
+    try_gen_rc_inc(encoder, 0, built_in->args.items[0]->type);
+
     instr = (Instr) {
       InstrKindRetVal,
       {
@@ -2216,8 +2218,6 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
     DA_APPEND(encoder->instrs, instr);
 
     encoder->instrs.items[jump2_instr_index].as.jump_if_not.target = encoder->instrs.len;
-
-    try_gen_rc_inc(encoder, new_index, built_in->_return->type);
 
     instr = (Instr) {
       InstrKindRetVal,
