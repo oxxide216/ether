@@ -2395,7 +2395,7 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       segments.items[0].offset = 0;
       segments.items[0].size = 8;
 
-      i32 offset = 0;
+      i32 offset = 8;
       for (u32 j = 0; j <= i; ++j) {
         u32 size = get_type_size(captured_vars->items[j].type);
         segments.items[j + 1].offset = offset;
