@@ -1239,6 +1239,8 @@ static bool encode_expr(Encoder *encoder, Expr *expr, u32 dest_index,
       if (part->expr) {
         u32 part_var_index = define_temp_var(encoder, part->expr->type);
         encode_expr(encoder, part->expr, part_var_index, false, false);
+        if (part->expr->kind != ExprKindIdent)
+          try_gen_rc_inc(encoder, part_var_index, part->expr->type);
         DA_APPEND(part_var_indices, part_var_index);
       } else {
         start_size += part->str.len;
@@ -1492,7 +1494,7 @@ static bool encode_expr(Encoder *encoder, Expr *expr, u32 dest_index,
         DA_APPEND(encoder->instrs, instr);
       }
 
-      if (part->expr) {
+      if (part->expr && part->expr->kind != ExprKindIdent) {
         u32 part_var_index = part_var_indices.items[i];
         try_gen_rc_dec(encoder, part_var_index, part->expr->type);
       }
@@ -1603,6 +1605,8 @@ static bool encode_expr(Encoder *encoder, Expr *expr, u32 dest_index,
         },
       };
       DA_APPEND(encoder->instrs, instr);
+
+      try_gen_rc_dec_no_free(encoder, dest_index, expr->type);
     }
   } break;
   }
@@ -3428,7 +3432,7 @@ static void encode_built_in_to_gen(Encoder *encoder, BuiltInToGen *built_in) {
       };
       DA_APPEND(encoder->instrs, instr);
 
-      try_gen_rc_dec(encoder, element_index, built_in->args.items[0]->type);
+      try_gen_rc_dec(encoder, element_index, element_type);
     }
 
     StringBuilder sb = {0};
